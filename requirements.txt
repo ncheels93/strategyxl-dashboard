@@ -1,0 +1,6 @@
+streamlit>=1.32
+pandas>=2.0
+plotly>=5.18
+sqlalchemy>=2.0
+pymssql>=2.2          # cloud (Azure SQL) — pure-pip, bundles FreeTDS; works on Streamlit Community Cloud
+pyodbc>=5.0           # local dev only — Windows-auth to StockDevVM (unused on cloud)
