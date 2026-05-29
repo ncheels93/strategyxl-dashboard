@@ -1,6 +1,7 @@
-streamlit>=1.32
+streamlit>=1.42                      # st.context.cookies (remember-me login gate)
 pandas>=2.0
 plotly>=5.18
 sqlalchemy>=2.0
-pymssql>=2.2          # cloud (Azure SQL) — pure-pip, bundles FreeTDS; works on Streamlit Community Cloud
-pyodbc>=5.0           # local dev only — Windows-auth to StockDevVM (unused on cloud)
+pymssql>=2.2                         # cloud (Azure SQL) — pure-pip, bundles FreeTDS; works on Streamlit Community Cloud
+pyodbc>=5.0                          # local dev only — Windows-auth to StockDevVM (unused on cloud)
+extra-streamlit-components>=0.1.60   # cookie component for the remembered shared-password gate
