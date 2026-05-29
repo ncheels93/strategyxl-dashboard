@@ -347,3 +347,34 @@ PRINT 'Created dbo.Scenario_Runs      (' + CAST(@runs_cols  AS VARCHAR) + ' cols
 PRINT 'Created dbo.Scenario_TradeLog  (' + CAST(@tlog_cols  AS VARCHAR) + ' cols)';
 PRINT 'Created dbo.Scenario_Queue     (' + CAST(@queue_cols AS VARCHAR) + ' cols)';
 GO
+
+-- ===========================================================
+-- dbo.SPX_Daily_MAs — SPX daily close + all moving averages.
+-- Holds the 2007+ subset on the share DB (full history lives on StockDevVM).
+-- Run-independent reference data used by the dashboard for per-trade entry
+-- context (% above 200-day SMA, etc.). GUARDED create (NOT drop+recreate) so
+-- a full re-run of this script never wipes the migrated daily series.
+-- ===========================================================
+IF OBJECT_ID('dbo.SPX_Daily_MAs', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SPX_Daily_MAs (
+        trade_date  DATE            NOT NULL,
+        spx_close   DECIMAL(18,6)   NOT NULL,
+        sma_5       DECIMAL(18,6)   NULL,
+        sma_10      DECIMAL(18,6)   NULL,
+        sma_20      DECIMAL(18,6)   NULL,
+        sma_50      DECIMAL(18,6)   NULL,
+        sma_100     DECIMAL(18,6)   NULL,
+        sma_150     DECIMAL(18,6)   NULL,
+        sma_200     DECIMAL(18,6)   NULL,
+        ema_9       DECIMAL(18,6)   NULL,
+        ema_20      DECIMAL(18,6)   NULL,
+        ema_50      DECIMAL(18,6)   NULL,
+        ema_200     DECIMAL(18,6)   NULL,
+        CONSTRAINT pk_spx_daily_mas PRIMARY KEY CLUSTERED (trade_date)
+    );
+    PRINT 'Created dbo.SPX_Daily_MAs';
+END
+ELSE
+    PRINT 'dbo.SPX_Daily_MAs already exists — left as-is.';
+GO

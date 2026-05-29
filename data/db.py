@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import time
 from urllib.parse import quote_plus
 
 import streamlit as st
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError, DBAPIError
 import pandas as pd
 
 _AUTH_COOKIE = "sxl_auth"
@@ -60,29 +62,77 @@ def get_engine():
     return create_engine(conn_str, pool_pre_ping=True)
 
 
+# Azure serverless DBs auto-pause after ~1h idle. The first connection while the
+# DB is resuming is REJECTED almost instantly with error 40613 ("…is not currently
+# available. Please retry…"), so a big login_timeout doesn't help on its own — the
+# server answers fast with an error rather than hanging. We catch that signature,
+# show a friendly notice, and retry until the resume finishes (~30–60s).
+_COLD_START_SIGNS = ("not currently available", "40613", "adaptive server connection failed")
+
+
+def _is_cold_start(err: Exception) -> bool:
+    s = str(err).lower()
+    return any(sig in s for sig in _COLD_START_SIGNS)
+
+
+def _read_sql(sql: str, params: dict | None = None, *,
+              max_wait: int = 90, interval: int = 3) -> pd.DataFrame:
+    """Run a query, transparently riding through an Azure serverless cold-start."""
+    eng = get_engine()
+    deadline = time.monotonic() + max_wait
+    notice = None
+    while True:
+        try:
+            with eng.connect() as cn:
+                df = pd.read_sql(text(sql), cn, params=params or {})
+            if notice is not None:
+                notice.empty()
+            return df
+        except (OperationalError, DBAPIError) as e:
+            if not _is_cold_start(e) or time.monotonic() >= deadline:
+                raise
+            if notice is None:
+                notice = st.empty()
+            notice.info("⏳ Waking the database — this can take up to a minute after a "
+                        "period of inactivity. Hang tight, the page will load itself…")
+            time.sleep(interval)
+
+
 @st.cache_data(ttl=300, show_spinner="Loading scenarios…")
 def load_scenario_runs() -> pd.DataFrame:
     """All scenarios for the leaderboard. Cached 5 minutes."""
-    sql = """
-        SELECT *
-          FROM dbo.Scenario_Runs
-         ORDER BY run_id DESC
-    """
-    with get_engine().connect() as cn:
-        return pd.read_sql(text(sql), cn)
+    return _read_sql("SELECT * FROM dbo.Scenario_Runs ORDER BY run_id DESC")
 
 
 @st.cache_data(ttl=1800, show_spinner="Loading trade log…")
 def load_trade_log(run_id: int) -> pd.DataFrame:
     """Per-day trade log for one run. Cached 30 minutes."""
-    sql = """
-        SELECT *
-          FROM dbo.Scenario_TradeLog
-         WHERE run_id = :run_id
-         ORDER BY day_num
-    """
-    with get_engine().connect() as cn:
-        return pd.read_sql(text(sql), cn, params={"run_id": int(run_id)})
+    return _read_sql(
+        "SELECT * FROM dbo.Scenario_TradeLog WHERE run_id = :run_id ORDER BY day_num",
+        {"run_id": int(run_id)},
+    )
+
+
+@st.cache_data(ttl=3600, show_spinner="Loading SPX daily MAs…")
+def load_spx_daily() -> pd.DataFrame:
+    """SPX daily close + all moving averages (2007+ on the share DB). Cached 1 hour.
+    Used to show each trade's entry context (% above the 200-day SMA, etc.)."""
+    return _read_sql(
+        "SELECT trade_date, spx_close, sma_5, sma_10, sma_20, sma_50, sma_100, "
+        "sma_150, sma_200, ema_9, ema_20, ema_50, ema_200 "
+        "FROM dbo.SPX_Daily_MAs ORDER BY trade_date"
+    )
+
+
+def render_footer() -> None:
+    """Shared StrategyXL footer link — call at the bottom of every page so the
+    branding reads as consistent attribution, not a per-page ad. Understated:
+    a divider + a muted caption with the link inline."""
+    st.divider()
+    st.caption(
+        "Interested in backtesting stocks directly in Excel? "
+        "→ [StrategyXL.com](https://strategyxl.com)"
+    )
 
 
 def check_password_gate() -> bool:

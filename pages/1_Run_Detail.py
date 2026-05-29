@@ -8,12 +8,16 @@ Selects a run from a dropdown (or ?run_id=N URL param) and shows:
 
 from __future__ import annotations
 
+import math
+
 import streamlit as st
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 
-from data.db import load_scenario_runs, load_trade_log, check_password_gate
+from data.db import (load_scenario_runs, load_trade_log, load_spx_daily,
+                     check_password_gate, render_footer)
 
 st.set_page_config(
     page_title="Run Detail — StrategyXL",
@@ -230,11 +234,41 @@ if tlog.empty:
     st.warning(f"No trade log rows found for run {selected_run_id}.")
     st.stop()
 
+tlog = tlog.copy()
+tlog["_dt"] = pd.to_datetime(tlog["trade_date"])
+
+
+def _period_window(key: str):
+    """Per-chart period slicer. When the run spans > 5 years, show a radio of
+    'All' + three contiguous whole-year blocks and return the selected
+    (start, end) Timestamps. Short runs get no radio (returns the full span)."""
+    dmin, dmax = tlog["_dt"].min(), tlog["_dt"].max()
+    if (dmax - dmin).days <= 5 * 365.25:
+        return dmin, dmax
+    y0, y1 = int(dmin.year), int(dmax.year)
+    size = math.ceil((y1 - y0 + 1) / 3)
+    blocks, s = [], y0
+    while s <= y1:
+        e = min(s + size - 1, y1)
+        blocks.append((s, e))
+        s = e + 1
+    labels = [f"All ({y0}–{y1})"] + [f"{a}–{b}" for a, b in blocks]
+    choice = st.radio("Period", labels, horizontal=True, key=key,
+                      label_visibility="collapsed")
+    i = labels.index(choice)
+    if i == 0:
+        return dmin, dmax
+    a, b = blocks[i - 1]
+    return pd.Timestamp(a, 1, 1), pd.Timestamp(b, 12, 31)
+
+
 # Equity curve
 st.subheader("Equity Curve")
+_w0, _w1 = _period_window("per_eq")
+eqd = tlog[(tlog["_dt"] >= _w0) & (tlog["_dt"] <= _w1)]
 fig_eq = go.Figure()
 fig_eq.add_trace(go.Scatter(
-    x=tlog["trade_date"], y=tlog["equity_eod"],
+    x=eqd["trade_date"], y=eqd["equity_eod"],
     mode="lines", line=dict(color="#3D8B37", width=2),
     fill="tozeroy", fillcolor="rgba(61,139,55,0.1)",
     name="Equity",
@@ -256,9 +290,12 @@ st.caption(
     "When the cushion drops below 0%, equity has dipped into starting capital."
 )
 
+_w0d, _w1d = _period_window("per_dd")
+ddd = tlog[(tlog["_dt"] >= _w0d) & (tlog["_dt"] <= _w1d)]
+
 start_cap = float(run["in_starting_capital"])
-cum_ret = tlog["equity_eod"].astype(float) / start_cap - 1.0
-dd = tlog["drawdown_pct"].astype(float)
+cum_ret = ddd["equity_eod"].astype(float) / start_cap - 1.0
+dd = ddd["drawdown_pct"].astype(float)
 
 cr_max = max(float(cum_ret.max()), 0.0)
 cr_min = min(float(cum_ret.min()), 0.0)
@@ -285,12 +322,12 @@ dd_ticks = [-step * i for i in range(0, int(abs(l_bot) / step) + 1)]
 
 fig_dd = go.Figure()
 fig_dd.add_trace(go.Scatter(
-    x=tlog["trade_date"], y=dd, name="Drawdown from Peak",
+    x=ddd["trade_date"], y=dd, name="Drawdown from Peak",
     mode="lines", line=dict(color="#5B8AA6", width=1),
     fill="tozeroy", fillcolor="rgba(91,138,166,0.55)", yaxis="y",
 ))
 fig_dd.add_trace(go.Scatter(
-    x=tlog["trade_date"], y=cum_ret, name="Profit Cushion",
+    x=ddd["trade_date"], y=cum_ret, name="Profit Cushion",
     mode="lines", line=dict(color="#3D8B37", width=1.2),  # same green as the Equity Curve
     fill="tozeroy", fillcolor="rgba(61,139,55,0.50)", yaxis="y2",
 ))
@@ -310,8 +347,10 @@ st.plotly_chart(fig_dd, use_container_width=True)
 
 # Annual returns
 st.subheader("Annual Returns")
+_w0a, _w1a = _period_window("per_ann")
+annd = tlog[(tlog["_dt"] >= _w0a) & (tlog["_dt"] <= _w1a)]
 annual = (
-    tlog[["trade_date", "realized_pnl_today"]]
+    annd[["trade_date", "realized_pnl_today"]]
     .assign(year=lambda d: pd.to_datetime(d["trade_date"]).dt.year)
     .groupby("year", as_index=False)["realized_pnl_today"].sum()
 )
@@ -326,6 +365,84 @@ fig_ann.update_xaxes(title="Year", dtick=1)
 st.plotly_chart(fig_ann, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────────────
+# Top 10 winning / losing trades — with entry context
+# ─────────────────────────────────────────────────────────────────────────
+st.divider()
+st.subheader("Top 10 Winning & Losing Trades")
+
+# Per-trade NET P&L: realized_pnl_today is the friction-adjusted result, booked on
+# the close day. Attribute it to the closing trade — the expiring trade on expir
+# days, otherwise the current trade_num on early-exit days — then sum per trade.
+closes = tlog[tlog["realized_pnl_today"].fillna(0) != 0].copy()
+if closes.empty:
+    st.caption("No closed trades to rank for this run.")
+else:
+    closes["closing_trade_num"] = closes["expiring_trade_num"].fillna(closes["trade_num"])
+    closes["exit_label"] = np.where(closes["expiring_trade_num"].notna(), "Expire",
+                                    closes["exit_reason"])
+    closes = closes.dropna(subset=["closing_trade_num"])
+    per_trade = closes.groupby("closing_trade_num", as_index=False).agg(
+        net_pnl=("realized_pnl_today", "sum"),
+        exit_label=("exit_label", "last"),
+    )
+
+    # Entry context: one row per trade where entry_day == 1 (entry_date == trade_date).
+    entries = (
+        tlog[(tlog["entry_day"] == 1) & tlog["trade_num"].notna()]
+        [["trade_num", "entry_date", "spx_close", "trend_ma"]]
+        .rename(columns={"spx_close": "entry_spx", "trend_ma": "entry_ma"})
+        .drop_duplicates("trade_num")
+    )
+    m = per_trade.merge(entries, left_on="closing_trade_num", right_on="trade_num", how="left")
+
+    # Always-on 200-day SMA context, joined on entry_date.
+    spx = load_spx_daily()[["trade_date", "sma_200"]].copy()
+    spx["entry_date"] = pd.to_datetime(spx["trade_date"])
+    m["entry_date"] = pd.to_datetime(m["entry_date"])
+    m = m.merge(spx[["entry_date", "sma_200"]], on="entry_date", how="left")
+
+    m["entry_spx"] = m["entry_spx"].astype(float)
+    m["pct_above_ma"]  = (m["entry_spx"] / m["entry_ma"].astype(float) - 1.0) * 100.0
+    m["pct_above_200"] = (m["entry_spx"] / m["sma_200"].astype(float) - 1.0) * 100.0
+
+    _ma_name = run["in_trend_filter_ma"]
+    _ma_on = bool(run["in_trend_filter_on"]) and pd.notna(_ma_name)
+    _ma_col = f"% above {_ma_name}" if _ma_on else "% above entry MA"
+
+    def _fmt_table(d: pd.DataFrame) -> pd.DataFrame:
+        cols = {
+            "Trade #":    d["closing_trade_num"].astype(int),
+            "Entry Date": d["entry_date"].dt.date.astype(str),
+            "Exit":       d["exit_label"].fillna("—"),
+            "Net P&L":    d["net_pnl"].astype(float),
+            "Entry SPX":  d["entry_spx"],
+        }
+        if _ma_on:   # filter-off runs have no entry-MA criterion → omit the column
+            cols[_ma_col] = d["pct_above_ma"]
+        cols["% above 200-SMA"] = d["pct_above_200"]
+        return pd.DataFrame(cols)
+
+    colcfg = {
+        "Net P&L":         st.column_config.NumberColumn(format="$%.0f"),
+        "Entry SPX":       st.column_config.NumberColumn(format="%.2f"),
+        "% above 200-SMA": st.column_config.NumberColumn(format="%.2f%%"),
+    }
+    if _ma_on:
+        colcfg[_ma_col] = st.column_config.NumberColumn(format="%.2f%%")
+
+    if not _ma_on:
+        st.caption("This run's trend filter is **off** — there's no entry-MA criterion, "
+                   "so that column is omitted. The “% above 200-SMA” column still shows "
+                   "where SPX sat relative to its 200-day average on each entry.")
+
+    st.markdown("**🟢 Top 10 Winning Trades**")
+    st.dataframe(_fmt_table(m.nlargest(10, "net_pnl")), use_container_width=True,
+                 hide_index=True, column_config=colcfg)
+    st.markdown("**🔴 Top 10 Losing Trades**")
+    st.dataframe(_fmt_table(m.nsmallest(10, "net_pnl")), use_container_width=True,
+                 hide_index=True, column_config=colcfg)
+
+# ─────────────────────────────────────────────────────────────────────────
 # Trade log
 # ─────────────────────────────────────────────────────────────────────────
 st.divider()
@@ -336,7 +453,7 @@ row_filter = st.radio(
     index=0, horizontal=True,
 )
 
-view_tlog = tlog.copy()
+view_tlog = tlog.drop(columns=["_dt"]).copy()
 if row_filter == "Entry days":
     view_tlog = view_tlog[view_tlog["entry_day"] == 1]
 elif row_filter == "Days with an open trade":
@@ -348,3 +465,5 @@ elif row_filter == "Exit days":
 
 st.caption(f"{len(view_tlog):,} rows shown of {len(tlog):,}  ·  click a column header to sort")
 st.dataframe(view_tlog, use_container_width=True, height=600, hide_index=True)
+
+render_footer()

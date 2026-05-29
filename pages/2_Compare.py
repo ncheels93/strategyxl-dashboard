@@ -11,7 +11,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from data.db import load_scenario_runs, load_trade_log, check_password_gate
+from data.db import load_scenario_runs, load_trade_log, check_password_gate, render_footer
 
 st.set_page_config(page_title="Compare — StrategyXL", page_icon="⚖️", layout="wide")
 check_password_gate()
@@ -177,3 +177,5 @@ fig_dd.update_yaxes(tickformat=".0%")
 fig_dd.update_layout(height=320, margin=dict(l=10, r=10, t=20, b=10),
                      legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
 st.plotly_chart(fig_dd, use_container_width=True)
+
+render_footer()

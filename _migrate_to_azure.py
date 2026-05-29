@@ -34,8 +34,13 @@ import sys
 import pyodbc
 
 # Parent before child — FK on Scenario_TradeLog.run_id references Scenario_Runs.
-TABLES = ["Scenario_Runs", "Scenario_TradeLog"]
+# SPX_Daily_MAs is standalone reference data (no FK); order doesn't matter.
+TABLES = ["Scenario_Runs", "Scenario_TradeLog", "SPX_Daily_MAs"]
 IDENTITY_TABLES = {"Scenario_Runs"}  # preserve run_id so drill-in URLs stay stable
+# Tables migrated as a SUBSET of the local source. The full-history SPX_Daily_MAs
+# lives on StockDevVM; only the 2007+ slice the dashboard needs goes to Azure.
+# The filter is applied to both the source SELECT and the source COUNT check.
+WHERE_FILTERS = {"SPX_Daily_MAs": "trade_date >= '2007-01-01'"}
 BATCH = 2000
 
 
@@ -100,11 +105,15 @@ def migrate_table(src: pyodbc.Connection, tgt: pyodbc.Connection, table: str,
     placeholders = ", ".join(["?"] * len(src_cols))
     insert_sql = f"INSERT INTO dbo.{table} ({col_list}) VALUES ({placeholders})"
 
+    where_sql = f" WHERE {WHERE_FILTERS[table]}" if table in WHERE_FILTERS else ""
+    if where_sql:
+        print(f"[{table}] source filter: {WHERE_FILTERS[table]}")
+
     is_identity = table in IDENTITY_TABLES
     if is_identity:
         tcur.execute(f"SET IDENTITY_INSERT dbo.{table} ON")
 
-    scur.execute(f"SELECT {col_list} FROM dbo.{table}")
+    scur.execute(f"SELECT {col_list} FROM dbo.{table}{where_sql}")
     total = 0
     while True:
         rows = scur.fetchmany(BATCH)
@@ -119,8 +128,8 @@ def migrate_table(src: pyodbc.Connection, tgt: pyodbc.Connection, table: str,
         tcur.execute(f"SET IDENTITY_INSERT dbo.{table} OFF")
         tgt.commit()
 
-    # Verify
-    scur.execute(f"SELECT COUNT(*) FROM dbo.{table}")
+    # Verify — compare target (full) against the SAME-filtered source count.
+    scur.execute(f"SELECT COUNT(*) FROM dbo.{table}{where_sql}")
     src_count = scur.fetchone()[0]
     tcur.execute(f"SELECT COUNT(*) FROM dbo.{table}")
     tgt_count = tcur.fetchone()[0]
@@ -139,7 +148,12 @@ def main() -> None:
     ap.add_argument("--src-server", default="StockDevVM", help="Source server (default StockDevVM)")
     ap.add_argument("--src-database", default="ORATS_Options", help="Source database (default ORATS_Options)")
     ap.add_argument("--truncate", action="store_true", help="Wipe target tables before loading")
+    ap.add_argument("--tables", nargs="+", choices=TABLES, default=None,
+                    help="Subset of tables to migrate (default: all). "
+                         "e.g. --tables SPX_Daily_MAs to add just the daily series.")
     args = ap.parse_args()
+
+    tables = args.tables or TABLES
 
     password = args.password or os.environ.get("AZURE_SQL_PASSWORD") or getpass.getpass("Azure SQL password: ")
 
@@ -150,9 +164,9 @@ def main() -> None:
 
     try:
         grand = 0
-        for table in TABLES:
+        for table in tables:
             grand += migrate_table(src, tgt, table, args.truncate)
-        print(f"\nMigration complete — {grand:,} rows across {len(TABLES)} tables.")
+        print(f"\nMigration complete — {grand:,} rows across {len(tables)} table(s).")
     finally:
         src.close()
         tgt.close()

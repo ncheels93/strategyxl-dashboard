@@ -7,7 +7,7 @@ sidebar filters. Click a run's number in the leaderboard to drill in.
 import streamlit as st
 import plotly.express as px
 
-from data.db import load_scenario_runs, check_password_gate
+from data.db import load_scenario_runs, check_password_gate, render_footer
 
 # ─────────────────────────────────────────────────────────────────────────
 # Page config
@@ -247,3 +247,5 @@ average (e.g. `ema_9`, `sma_200`) only enter when SPX closes above that MA — s
 have the most trades.
         """
     )
+
+render_footer()
