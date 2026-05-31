@@ -80,18 +80,24 @@ def _read_sql(sql: str, params: dict | None = None, *,
     """Run a query, transparently riding through an Azure serverless cold-start."""
     eng = get_engine()
     deadline = time.monotonic() + max_wait
-    notice = None
+    spacer = notice = None
     while True:
         try:
             with eng.connect() as cn:
                 df = pd.read_sql(text(sql), cn, params=params or {})
-            if notice is not None:
-                notice.empty()
+            for ph in (notice, spacer):
+                if ph is not None:
+                    ph.empty()
             return df
         except (OperationalError, DBAPIError) as e:
             if not _is_cold_start(e) or time.monotonic() >= deadline:
                 raise
             if notice is None:
+                # The cache spinner ("Loading scenarios…") renders at this same spot;
+                # add a little vertical space so the notice sits clear of it rather
+                # than overlapping. Both placeholders are cleared once data arrives.
+                spacer = st.empty()
+                spacer.markdown("<br><br>", unsafe_allow_html=True)
                 notice = st.empty()
             notice.info("⏳ Waking the database — this can take up to a minute after a "
                         "period of inactivity. Hang tight, the page will load itself…")

@@ -18,6 +18,7 @@ import plotly.express as px
 
 from data.db import (load_scenario_runs, load_trade_log, load_spx_daily,
                      check_password_gate, render_footer)
+from data.docs import explain, guide_link
 
 st.set_page_config(
     page_title="Run Detail — StrategyXL",
@@ -80,6 +81,7 @@ st.caption(
     f"width: **\\${run['in_spread_width']:.0f}**  ·  "
     f"starting cap: **\\${run['in_starting_capital']:,.0f}**"
 )
+guide_link()
 
 # ─────────────────────────────────────────────────────────────────────────
 # Headline KPI cards
@@ -170,6 +172,7 @@ with st.expander("Full criteria", expanded=False):
         _grp("Benchmark", g_benchmark)
         _grp("Withdrawals", g_withdrawals)
 
+explain("detail_kpis", "ⓘ  About these metrics")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
     st.metric("Starting Capital", fmt_money0(run["in_starting_capital"]))
@@ -191,6 +194,7 @@ st.divider()
 
 # Risk-adjusted (monthly returns, annualized)
 st.subheader("Risk-Adjusted Returns")
+explain("detail_risk")
 st.caption("Monthly returns, annualized  ·  risk-free = FRED 3-mo  ·  Sortino MAR = 0")
 rc1, rc2, rc3, rc4 = st.columns(4)
 with rc1: st.metric("Annualized Volatility", fmt_pct(run["kpi_ann_return_stdev"]),
@@ -218,11 +222,31 @@ with c4:
 if run.get("in_withdrawals_on"):
     st.divider()
     st.subheader("Withdrawals")
+    explain("detail_withdrawals")
+    st.caption(
+        f"Target \\${run['in_target_monthly_withdrawal']:,.0f}/mo  ·  "
+        f"floor \\${run['in_withdrawal_floor']/1000:,.0f}k  ·  "
+        f"start {run['in_withdrawal_start_date']}  ·  "
+        f"inflation {fmt_pct(run['in_inflation_adjust_pct'])}"
+    )
     c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric("Total Withdrawn",  fmt_money(run["kpi_total_withdrawn"]))
-    with c2: st.metric("Coverage",         fmt_pct(run["kpi_coverage_pct"]))
-    with c3: st.metric("Avg Monthly",      fmt_money(run["kpi_avg_monthly_income"]))
-    with c4: st.metric("Worst Month",      fmt_money(run["kpi_worst_single_month"]))
+    with c1: st.metric("Total Withdrawn",  fmt_money0(run["kpi_total_withdrawn"]))
+    with c2: st.metric("Coverage",         fmt_pct(run["kpi_coverage_pct"]),
+                       help="Share of the inflation-adjusted target actually paid")
+    with c3: st.metric("Avg Monthly",      fmt_money0(run["kpi_avg_monthly_income"]))
+    with c4: st.metric("Worst Month",      fmt_money0(run["kpi_worst_single_month"]),
+                       help="Smallest non-zero monthly withdrawal")
+
+    def _miv(v): return "—" if pd.isna(v) else f"{int(v):,}"
+    d1, d2, d3, d4 = st.columns(4)
+    with d1: st.metric("Months Full",        _miv(run["kpi_months_full"]),
+                       help="Months the full inflation-adjusted target was paid")
+    with d2: st.metric("Months Partial",     _miv(run["kpi_months_partial"]),
+                       help="Months only part of the target could be paid (would have breached the floor)")
+    with d3: st.metric("Months Zero",        _miv(run["kpi_months_zero"]),
+                       help="Months nothing was paid (already at/below floor)")
+    with d4: st.metric("Months Not Started", _miv(run["kpi_months_not_started"]),
+                       help="Months before the withdrawal start date")
 
 # ─────────────────────────────────────────────────────────────────────────
 # Charts (require the trade log)
@@ -285,6 +309,7 @@ st.plotly_chart(fig_eq, use_container_width=True)
 # share a zero line, so when the red cushion crosses below 0 the equity has dipped
 # into starting capital. Purely a display derivation — the drawdown metric is untouched.
 st.subheader("Drawdown & Profit Cushion")
+explain("detail_drawdown")
 st.caption(
     "Drawdown from peak (left axis, ≤ 0)  ·  cumulative return from start (right axis).  "
     "When the cushion drops below 0%, equity has dipped into starting capital."
@@ -364,11 +389,26 @@ fig_ann.update_yaxes(tickformat="$,.0f", title="Net P&L")
 fig_ann.update_xaxes(title="Year", dtick=1)
 st.plotly_chart(fig_ann, use_container_width=True)
 
+# Cumulative withdrawn (only when withdrawals are on) — rises over time and
+# flattens whenever the account sits at the floor and payments pause.
+if run.get("in_withdrawals_on"):
+    st.subheader("Cumulative Withdrawn")
+    fig_wd = go.Figure()
+    fig_wd.add_trace(go.Scatter(
+        x=tlog["trade_date"], y=tlog["cum_withdrawn"].astype(float),
+        mode="lines", line=dict(color="#C28A2B", width=1.5),
+        fill="tozeroy", fillcolor="rgba(194,138,43,0.25)", name="Cumulative Withdrawn",
+    ))
+    fig_wd.update_layout(height=260, margin=dict(l=10, r=10, t=20, b=10), showlegend=False)
+    fig_wd.update_yaxes(tickformat="$,.0f")
+    st.plotly_chart(fig_wd, use_container_width=True)
+
 # ─────────────────────────────────────────────────────────────────────────
 # Top 10 winning / losing trades — with entry context
 # ─────────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("Top 10 Winning & Losing Trades")
+explain("detail_top10")
 
 # Per-trade NET P&L: realized_pnl_today is the friction-adjusted result, booked on
 # the close day. Attribute it to the closing trade — the expiring trade on expir
@@ -447,6 +487,7 @@ else:
 # ─────────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("Trade Log")
+explain("detail_tradelog")
 
 row_filter = st.radio(
     "Show", options=["All days", "Entry days", "Days with an open trade", "Exit days"],

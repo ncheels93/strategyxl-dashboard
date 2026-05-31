@@ -12,11 +12,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data.db import load_scenario_runs, load_trade_log, check_password_gate, render_footer
+from data.docs import explain, guide_link
 
 st.set_page_config(page_title="Compare — StrategyXL", page_icon="⚖️", layout="wide")
 check_password_gate()
 
 st.title("Compare Runs")
+guide_link()
 
 runs = load_scenario_runs()
 if runs.empty:
@@ -52,6 +54,7 @@ st.markdown("**Comparing:** " + links)
 # KPI comparison table — best value in each row highlighted
 # ─────────────────────────────────────────────────────────────────────────
 st.subheader("KPIs")
+explain("compare_kpis")
 KPI_SPECS = [
     ("Ending Equity",    "kpi_ending_equity",    lambda v: f"${v:,.0f}",     "max"),
     ("Total Return",     "kpi_total_return_pct", lambda v: f"{v*100:,.2f}%", "max"),
@@ -66,6 +69,16 @@ KPI_SPECS = [
     ("Net Realized P&L", "kpi_realized_pnl",     lambda v: f"${v:,.0f}",     "max"),
     ("Total Trades",     "kpi_total_trades",     lambda v: f"{int(v):,}",    "none"),
 ]
+# Withdrawal rows — appended only if at least one selected run has withdrawals on.
+if sub["in_withdrawals_on"].fillna(False).astype(bool).any():
+    KPI_SPECS += [
+        ("Total Withdrawn", "kpi_total_withdrawn",    lambda v: f"${v:,.0f}",     "none"),
+        ("WD Coverage",     "kpi_coverage_pct",       lambda v: f"{v*100:,.1f}%", "max"),
+        ("Avg Monthly WD",  "kpi_avg_monthly_income", lambda v: f"${v:,.0f}",     "none"),
+        ("Months Full",     "kpi_months_full",        lambda v: f"{int(v):,}",    "max"),
+        ("Months Partial",  "kpi_months_partial",     lambda v: f"{int(v):,}",    "min"),
+        ("Months Zero",     "kpi_months_zero",        lambda v: f"{int(v):,}",    "min"),
+    ]
 labels = [s[0] for s in KPI_SPECS]
 disp = pd.DataFrame(index=labels, columns=col_labels, dtype=object)
 raw = pd.DataFrame(index=labels, columns=col_labels, dtype=float)
@@ -87,13 +100,15 @@ for (lab, col, fmt, direction) in KPI_SPECS:
         if pd.notna(rv[clab]) and rv[clab] == best:
             style_df.loc[lab, clab] = "background-color: rgba(61,139,55,0.30)"
 
-st.dataframe(disp.style.apply(lambda _: style_df, axis=None), use_container_width=True)
+st.dataframe(disp.style.apply(lambda _: style_df, axis=None), use_container_width=True,
+             height=int((len(labels) + 1) * 35 + 3))   # fit all rows (incl. WD) — no inner scroll
 st.caption("Green = best value in that row across the selected runs.")
 
 # ─────────────────────────────────────────────────────────────────────────
 # Criteria diff — only inputs that differ across the selected runs
 # ─────────────────────────────────────────────────────────────────────────
 st.subheader("Criteria differences")
+explain("compare_criteria")
 
 def _b(v):    return "—" if pd.isna(v) else ("On" if bool(v) else "Off")
 def _m0(v):   return "—" if pd.isna(v) else f"${v:,.0f}"
@@ -154,6 +169,7 @@ else:
 tlogs = {rid: load_trade_log(rid) for rid in sel_ids}
 
 st.subheader("Cumulative Return")
+explain("compare_curves")
 fig_cr = go.Figure()
 for rid, clab in zip(sel_ids, col_labels):
     tl = tlogs[rid]
@@ -177,5 +193,19 @@ fig_dd.update_yaxes(tickformat=".0%")
 fig_dd.update_layout(height=320, margin=dict(l=10, r=10, t=20, b=10),
                      legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
 st.plotly_chart(fig_dd, use_container_width=True)
+
+# Cumulative withdrawn overlay — only if at least one selected run has withdrawals on.
+if sub["in_withdrawals_on"].fillna(False).astype(bool).any():
+    st.subheader("Cumulative Withdrawn")
+    fig_wd = go.Figure()
+    for rid, clab in zip(sel_ids, col_labels):
+        tl = tlogs[rid]
+        fig_wd.add_trace(go.Scatter(
+            x=tl["trade_date"], y=tl["cum_withdrawn"].astype(float),
+            mode="lines", name=clab))
+    fig_wd.update_yaxes(tickformat="$,.0f")
+    fig_wd.update_layout(height=320, margin=dict(l=10, r=10, t=20, b=10),
+                         legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
+    st.plotly_chart(fig_wd, use_container_width=True)
 
 render_footer()

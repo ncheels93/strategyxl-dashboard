@@ -47,7 +47,7 @@ GO
 CREATE TABLE dbo.Scenario_Runs (
     run_id              INT             IDENTITY(1,1) NOT NULL,
     run_timestamp       DATETIME2(0)    NOT NULL CONSTRAINT df_scenrun_ts DEFAULT SYSUTCDATETIME(),
-    run_label           NVARCHAR(120)   NULL,
+    run_label           NVARCHAR(240)   NULL,
     batch_id            INT             NULL,
     queue_row_id        INT             NULL,
 
@@ -287,7 +287,7 @@ GO
 CREATE TABLE dbo.Scenario_Queue (
     queue_row_id        INT             IDENTITY(1,1) NOT NULL,
     batch_id            INT             NOT NULL,
-    queue_label         NVARCHAR(120)   NULL,
+    queue_label         NVARCHAR(240)   NULL,
     queued_timestamp    DATETIME2(0)    NOT NULL CONSTRAINT df_scenq_ts DEFAULT SYSUTCDATETIME(),
     status              VARCHAR(20)     NOT NULL CONSTRAINT df_scenq_status DEFAULT 'pending',
                         -- pending | running | complete | error
