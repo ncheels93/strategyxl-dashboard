@@ -328,6 +328,46 @@ else:
 st.divider()
 
 # ─────────────────────────────────────────────────────────────────────────
+# Trend-filter summary — one row per trend_filter_ma (incl. (filter off))
+# ─────────────────────────────────────────────────────────────────────────
+st.subheader("By trend filter")
+if filtered.empty:
+    st.caption("No runs in the current filter.")
+else:
+    _td = filtered.copy()
+    for _c in ("kpi_cagr", "kpi_max_dd_pct", "kpi_calmar", "kpi_sharpe"):
+        _td[_c] = pd.to_numeric(_td[_c], errors="coerce")
+    tf = (_td.groupby("trend_ma_display")
+             .agg(Runs=("run_id", "count"),
+                  MedCAGR=("kpi_cagr", "median"),
+                  MedMaxDD=("kpi_max_dd_pct", "median"),
+                  MedCalmar=("kpi_calmar", "median"),
+                  BestCalmar=("kpi_calmar", "max"),
+                  BestSharpe=("kpi_sharpe", "max"))
+             .reset_index().rename(columns={"trend_ma_display": "Trend MA"})
+             .sort_values("MedCalmar", ascending=False))
+    for _c in ("MedCAGR", "MedMaxDD"):
+        tf[_c] = tf[_c] * 100
+    st.dataframe(
+        tf, use_container_width=True, hide_index=True,
+        height=int((len(tf) + 1) * 35 + 3),
+        column_config={
+            "Trend MA":   st.column_config.TextColumn("Trend MA"),
+            "Runs":       st.column_config.NumberColumn("Runs", format="%d"),
+            "MedCAGR":    st.column_config.NumberColumn("Median CAGR", format="%.1f%%"),
+            "MedMaxDD":   st.column_config.NumberColumn("Median Max DD", format="%.1f%%"),
+            "MedCalmar":  st.column_config.NumberColumn("Median Calmar", format="%.2f"),
+            "BestCalmar": st.column_config.NumberColumn("Best Calmar", format="%.2f"),
+            "BestSharpe": st.column_config.NumberColumn("Best Sharpe", format="%.2f"),
+        })
+    st.caption("One row per trend-filter MA across the filtered set — each MA spans the same "
+               "group×width configs, so this is apples-to-apples. Median = the typical run. "
+               "Sorted by Median Calmar: faster filters (ema_9, short SMAs) lead; the slow "
+               "50>200 regime trails.")
+
+st.divider()
+
+# ─────────────────────────────────────────────────────────────────────────
 # Leaderboard
 # ─────────────────────────────────────────────────────────────────────────
 st.subheader("Leaderboard")
