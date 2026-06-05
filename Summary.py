@@ -258,6 +258,30 @@ else:
             text=["SPX"], textposition="top center", name="SPX buy &amp; hold",
             hovertemplate=f"SPX buy-and-hold<br>CAGR {_spx_cagr:.2%} · Max DD {_spx_dd:.2%}<extra></extra>"))
 
+    # Iso-Calmar reference rays. On this chart Calmar = CAGR / |Max DD| = the slope of
+    # the line from the origin to a point, so a constant-Calmar locus is a ray from
+    # (0,0); a dot steeper/above a ray beats that Calmar. Drawn as shapes (layer below)
+    # and clipped to the data box (incl. the SPX point) so they never rescale the axes.
+    _x_lo = min(float(plot_df["kpi_max_dd_pct"].min()), _spx_dd if _spx_dd is not None else 0.0)
+    _y_hi = max(float(plot_df["kpi_cagr"].max()), _spx_cagr if _spx_cagr is not None else 0.0)
+    _y_lo = min(0.0, float(plot_df["kpi_cagr"].min()))
+    # (_c, label-fraction): the fraction staggers each label down its ray so the
+    # steep rays (which all exit near the top edge) don't pile their labels together.
+    for _c, _lf in ((0.25, 0.92), (0.5, 0.85), (0.75, 0.66), (1.0, 0.5)):
+        # endpoint where ray y = -_c*x exits the data box (left edge or top edge)
+        if -_c * _x_lo <= _y_hi:
+            _ex, _ey = _x_lo, -_c * _x_lo
+        else:
+            _ex, _ey = -_y_hi / _c, _y_hi
+        fig.add_shape(type="line", x0=0, y0=0, x1=_ex, y1=_ey,
+                      xref="x", yref="y", layer="below",
+                      line=dict(color="rgba(130,170,210,0.35)", width=1, dash="dash"))
+        fig.add_annotation(x=_lf * _ex, y=_lf * _ey, text=f"Calmar {_c:g}", showarrow=False,
+                           font=dict(size=10, color="rgba(150,185,215,0.95)"),
+                           bgcolor="rgba(14,17,23,0.55)")
+    fig.update_xaxes(range=[_x_lo * 1.07, 0.006])
+    fig.update_yaxes(range=[_y_lo - 0.012, _y_hi * 1.10])
+
     event = st.plotly_chart(fig, use_container_width=True, on_select="rerun",
                             selection_mode=["points", "box", "lasso"], key="scatter_select")
 
@@ -278,7 +302,9 @@ else:
         if len(_sel_rids) >= 2:
             st.markdown(f"↳ [Compare these {len(_sel_rids)} runs →](Compare?runs={','.join(map(str, _sel_rids))})")
     else:
-        st.caption("Tip: click a dot for its detail link. Shift-click more dots — or use the box/lasso "
+        st.caption("Dashed rays are constant-Calmar lines (slope from the origin = CAGR ÷ |Max DD|); "
+                   "a dot above a steeper ray has a higher Calmar. "
+                   "Tip: click a dot for its detail link. Shift-click more dots — or use the box/lasso "
                    "tools in the chart's top-right toolbar — to select several and compare.")
 
     if _spx_cagr is not None:
