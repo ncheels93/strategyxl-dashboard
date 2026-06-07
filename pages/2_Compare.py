@@ -7,6 +7,7 @@ diff (only inputs that differ), and overlaid cumulative-return + drawdown curves
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -66,6 +67,10 @@ KPI_SPECS = [
     ("Sortino",          "kpi_sortino",          lambda v: f"{v:.2f}",       "max"),
     ("Win Rate",         "kpi_win_rate",         lambda v: f"{v*100:,.2f}%", "max"),
     ("Profit Factor",    "kpi_profit_factor",    lambda v: f"{v:.2f}",       "max"),
+    ("Avg Win",          "kpi_avg_win",          lambda v: f"${v:,.0f}",     "max"),
+    ("Avg Loss",         "kpi_avg_loss",         lambda v: f"${v:,.0f}",     "max"),   # least negative = best
+    ("Win/Loss Ratio",   "kpi_win_loss_ratio",   lambda v: f"{v:.2f}",       "max"),
+    ("Worst Loss",       "kpi_biggest_loss",     lambda v: f"${v:,.0f}",     "max"),   # least negative = best
     ("Net Realized P&L", "kpi_realized_pnl",     lambda v: f"${v:,.0f}",     "max"),
     ("Total Trades",     "kpi_total_trades",     lambda v: f"{int(v):,}",    "none"),
 ]
@@ -129,10 +134,8 @@ CRIT_SPECS = [
     ("Spread Handling", "in_spread_handling", _t),
     ("Product Mode", "in_product_mode", _t),
     ("Starting Capital", "in_starting_capital", _m0),
-    ("Base Trading Cap", "in_base_trading_cap", _m0),
-    ("Upside Reinvest", "in_upside_reinvest_pct", _p),
-    ("Max Gross % Equity", "in_max_gross_pct_equity", _p),
-    ("Gross-Cap Activation", "in_gross_cap_activation_eq", _m0),
+    ("Weekly Risk %", "in_weekly_risk_pct", _p),
+    ("Max Weekly Risk", "in_max_weekly_risk", lambda v: "Uncapped" if pd.isna(v) else f"${v:,.0f}"),
     ("Target CAGR", "in_target_cagr", _p),
     ("Trend Filter", "in_trend_filter_on", _b),
     ("Moving Average", "in_trend_filter_ma", _t),
@@ -207,5 +210,96 @@ if sub["in_withdrawals_on"].fillna(False).astype(bool).any():
     fig_wd.update_layout(height=320, margin=dict(l=10, r=10, t=20, b=10),
                          legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
     st.plotly_chart(fig_wd, use_container_width=True)
+
+# ─────────────────────────────────────────────────────────────────────────
+# Trade-by-trade comparison — every week each run traded, with filters
+# ─────────────────────────────────────────────────────────────────────────
+st.divider()
+st.subheader("Trade-by-Trade")
+st.caption(
+    "Every week each run actually traded, side by side — net P&L, the dollars at risk on "
+    "that spread, and how it ended. Sort by Entry Date to line up the same week across runs; "
+    "use the filters to focus on losers, a single year, or just the weeks where the runs diverged."
+)
+
+
+def _per_trade_rows(tl, rid):
+    """Collapse a daily trade log into one row per closed trade."""
+    if tl is None or tl.empty:
+        return pd.DataFrame()
+    _rp = pd.to_numeric(tl["realized_pnl_today"], errors="coerce").fillna(0)
+    closes = tl[_rp != 0].copy()
+    if closes.empty:
+        return pd.DataFrame()
+    closes["_ctn"] = closes["expiring_trade_num"].fillna(closes["trade_num"])
+    closes["_rpnl"] = pd.to_numeric(closes["realized_pnl_today"], errors="coerce")
+    closes["_exit"] = np.where(closes["expiring_trade_num"].notna(), "Expired",
+                               closes["exit_reason"].fillna("—").astype(str))
+    closes = closes.dropna(subset=["_ctn"])
+    agg = closes.groupby("_ctn", as_index=False).agg(
+        net_pnl=("_rpnl", "sum"), exit_label=("_exit", "last"), exit_date=("trade_date", "last"))
+    ent = (tl[(tl["entry_day"] == 1) & tl["trade_num"].notna()]
+           [["trade_num", "entry_date", "spx_close", "contracts", "max_loss", "spread_width_actual"]]
+           .drop_duplicates("trade_num"))
+    m = agg.merge(ent, left_on="_ctn", right_on="trade_num", how="left")
+    m["Run"] = f"#{rid}"
+    return m
+
+
+_all = pd.concat([_per_trade_rows(tlogs[rid], rid) for rid in sel_ids], ignore_index=True)
+if _all.empty:
+    st.info("No closed trades to show for the selected runs.")
+else:
+    _all["entry_date"] = pd.to_datetime(_all["entry_date"])
+    _all["net_pnl"] = pd.to_numeric(_all["net_pnl"], errors="coerce")
+    _all["Result"] = np.where(_all["net_pnl"] >= 0, "Win", "Loss")
+    _all["year"] = _all["entry_date"].dt.year
+
+    fc1, fc2, fc3 = st.columns([2, 2, 3])
+    _years = sorted(int(y) for y in _all["year"].dropna().unique())
+    with fc1:
+        sel_years = st.multiselect("Year", _years, default=_years, key="cmp_tt_years")
+    with fc2:
+        res_filter = st.radio("Result", ["All", "Wins", "Losses"], horizontal=True, key="cmp_tt_res")
+    with fc3:
+        disagree_only = st.checkbox(
+            "Only weeks where the runs diverged (a run skipped it, or win-vs-loss split)",
+            key="cmp_tt_dis")
+
+    view = _all.copy()
+    if sel_years:
+        view = view[view["year"].isin(sel_years)]
+    if res_filter == "Wins":
+        view = view[view["Result"] == "Win"]
+    elif res_filter == "Losses":
+        view = view[view["Result"] == "Loss"]
+    if disagree_only:
+        _n = len(sel_ids)
+        _div = _all.groupby("entry_date").filter(
+            lambda g: (g["Run"].nunique() < _n) or (g["Result"].nunique() > 1))
+        view = view[view["entry_date"].isin(_div["entry_date"].unique())]
+
+    disp = pd.DataFrame({
+        "Entry Date":  view["entry_date"].dt.date.astype(str),
+        "Run":         view["Run"],
+        "Width":       pd.to_numeric(view["spread_width_actual"], errors="coerce"),
+        "Contracts":   pd.to_numeric(view["contracts"], errors="coerce"),
+        "At Risk":     pd.to_numeric(view["max_loss"], errors="coerce").abs(),
+        "Net P&L":     view["net_pnl"],
+        "Result":      view["Result"],
+        "Exit":        view["exit_label"],
+        "SPX @ Entry": pd.to_numeric(view["spx_close"], errors="coerce"),
+    }).sort_values(["Entry Date", "Run"], ascending=[False, True])
+
+    st.caption(f"{len(disp):,} trades shown")
+    st.dataframe(
+        disp, use_container_width=True, hide_index=True, height=460,
+        column_config={
+            "Width":       st.column_config.NumberColumn(format="$%,.0f"),
+            "Contracts":   st.column_config.NumberColumn(format="%,d"),
+            "At Risk":     st.column_config.NumberColumn(format="$%,.0f"),
+            "Net P&L":     st.column_config.NumberColumn(format="$%,.0f"),
+            "SPX @ Entry": st.column_config.NumberColumn(format="%,.0f"),
+        })
 
 render_footer()

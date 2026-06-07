@@ -17,8 +17,8 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 from data.db import (load_scenario_runs, load_trade_log, load_spx_daily,
-                     check_password_gate, render_footer)
-from data.docs import explain, guide_link
+                     check_password_gate, render_footer, request_for_run_label)
+from data.docs import explain, guide_link, profile_label, risk_profile
 
 st.set_page_config(
     page_title="Run Detail — StrategyXL",
@@ -72,7 +72,9 @@ run = runs.loc[runs["run_id"] == selected_run_id].iloc[0]
 # ─────────────────────────────────────────────────────────────────────────
 # Header
 # ─────────────────────────────────────────────────────────────────────────
-st.title(f"Run #{run['run_id']} — {run['run_label']}")
+# Escape '$' so the label's dollar amounts don't trigger LaTeX math in the markdown title.
+_run_lbl = str(run["run_label"] or "").replace("$", "\\$")
+st.title(f"Run #{run['run_id']} — {_run_lbl}")
 _ma = run["in_trend_filter_ma"]
 _filter_txt = f"{_ma}" if (run["in_trend_filter_on"] and pd.notna(_ma)) else "OFF"
 st.caption(
@@ -81,6 +83,10 @@ st.caption(
     f"width: **\\${run['in_spread_width']:.0f}**  ·  "
     f"starting cap: **\\${run['in_starting_capital']:,.0f}**"
 )
+_req = request_for_run_label(run["run_label"])
+if _req:
+    _by = f" · requested by {_req['requested_by']}" if _req.get("requested_by") else ""
+    st.caption(f"📝 Requested as **{str(_req['scenario_name']).replace('$', chr(92) + '$')}**{_by}")
 guide_link()
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -111,7 +117,8 @@ with st.expander("Full criteria", expanded=False):
     def _grp(title, rows):
         md = f"| **{title}** | |\n|:--|--:|\n"
         for lbl, val in rows:
-            md += f"| {lbl} | {val} |\n"
+            v = str(val).replace("$", "\\$")   # escape so dollar amounts don't render as LaTeX
+            md += f"| {lbl} | {v} |\n"
         st.markdown(md)
 
     g_universe = [
@@ -130,11 +137,10 @@ with st.expander("Full criteria", expanded=False):
         ("Moving Average", _t(run["in_trend_filter_ma"])),
     ]
     g_sizing = [
+        ("Risk Profile", profile_label(run["in_max_weekly_risk"])),
         ("Starting Capital", _m0(run["in_starting_capital"])),
-        ("Base Trading Cap", _m0(run["in_base_trading_cap"])),
-        ("Upside Reinvest", _p(run["in_upside_reinvest_pct"])),
-        ("Max Gross % Equity", _p(run["in_max_gross_pct_equity"])),
-        ("Gross-Cap Activation", _m0(run["in_gross_cap_activation_eq"])),
+        ("Weekly Risk %", _p(run["in_weekly_risk_pct"])),
+        ("Max Weekly Risk", "Uncapped" if pd.isna(run["in_max_weekly_risk"]) else _m0(run["in_max_weekly_risk"])),
     ]
     g_exits = [
         ("Breach Close", _b(run["in_breach_close"])),
@@ -172,23 +178,71 @@ with st.expander("Full criteria", expanded=False):
         _grp("Benchmark", g_benchmark)
         _grp("Withdrawals", g_withdrawals)
 
+# Load the trade log up front so the equity-decomposition cards can sum interest exactly.
+tlog = load_trade_log(selected_run_id)
+_interest_income = (float(pd.to_numeric(tlog["interest_today"], errors="coerce").sum())
+                    if (not tlog.empty and "interest_today" in tlog.columns) else 0.0)
+
 explain("detail_kpis", "ⓘ  About these metrics")
-c1, c2, c3, c4 = st.columns(4)
+
+# Equity decomposition shown as an equation:
+#   Ending Equity = Starting Capital + Net Realized P&L + Interest Income (− Withdrawals)
+_parts = [
+    ("Ending Equity",    run["kpi_ending_equity"],   None,
+     "Account value on the last day — the sum of everything to the right of the = sign."),
+    ("Starting Capital", run["in_starting_capital"], "=",  None),
+    ("Net Realized P&L", run["kpi_realized_pnl"],    "+",
+     "Booked profit from closed trades, net of commission & slippage. Trading only — no interest."),
+    ("Interest Income",  _interest_income,           "+",
+     "Interest earned on the account's cash at the FRED 3-month T-bill rate, compounded daily."),
+]
+if pd.notna(run.get("kpi_total_withdrawn")) and float(run.get("kpi_total_withdrawn") or 0) > 0:
+    _parts.append(("Withdrawals", run["kpi_total_withdrawn"], "−",
+                   "Total cash withdrawn over the backtest — reduces ending equity."))
+
+_eq_widths = []
+for _lbl, _val, _op, _hlp in _parts:
+    if _op is not None:
+        _eq_widths.append(0.35)
+    _eq_widths.append(2.2)
+_eqc = st.columns(_eq_widths, vertical_alignment="center")
+_ci = 0
+for _lbl, _val, _op, _hlp in _parts:
+    if _op is not None:
+        _eqc[_ci].markdown(
+            f"<div style='text-align:center;font-size:1.8rem;color:#8b95a3'>{_op}</div>",
+            unsafe_allow_html=True)
+        _ci += 1
+    _eqc[_ci].metric(_lbl, fmt_money0(_val), help=_hlp)
+    _ci += 1
+
+st.write("")
+
+# Remaining headline metrics
+c1, c2, c3 = st.columns(3)
 with c1:
-    st.metric("Starting Capital", fmt_money0(run["in_starting_capital"]))
-    st.metric("Ending Equity",    fmt_money0(run["kpi_ending_equity"]))
-    st.metric("Total Return",     fmt_pct(run["kpi_total_return_pct"]))
+    st.metric("Total Return", fmt_pct(run["kpi_total_return_pct"]))
+    st.metric("CAGR",         fmt_pct(run["kpi_cagr"]))
+    st.metric("Years",        fmt_num(run["kpi_years"], 2))
 with c2:
-    st.metric("Years",            fmt_num(run["kpi_years"], 2))
-    st.metric("CAGR",             fmt_pct(run["kpi_cagr"]))
-    st.metric("Net Realized P&L", fmt_money0(run["kpi_realized_pnl"]))
+    st.metric("Max Drawdown", fmt_pct(run["kpi_max_dd_pct"]))
+    st.metric("Max DD Date",  str(run["kpi_max_dd_date"]) if not pd.isna(run["kpi_max_dd_date"]) else "—")
+    _cap = run["in_max_weekly_risk"]
+    _wrp = run["in_weekly_risk_pct"]
+    if pd.notna(_wrp) and pd.isna(_cap):
+        st.metric("Max Weekly Risk", f"{float(_wrp) * 100:.0f}% (uncapped)",
+                  help="Uncapped — risk stays at this % of the account every week with no hard "
+                       "dollar ceiling, so the dollar amount grows as the account grows.")
+    elif pd.notna(_wrp):
+        _bind = float(_cap) / float(_wrp)   # equity where the cap starts to bite
+        st.metric("Max Weekly Risk", f"${float(_cap):,.0f}",
+                  help=f"The hard ceiling — never more than this in a single week. Equals "
+                       f"{float(_wrp) * 100:.0f}% of equity until the account passes "
+                       f"\\${_bind:,.0f}, then it's a flat \\${float(_cap):,.0f} (a shrinking %).")
 with c3:
-    st.metric("Max Drawdown",     fmt_pct(run["kpi_max_dd_pct"]))
-    st.metric("Max DD Date",      str(run["kpi_max_dd_date"]) if not pd.isna(run["kpi_max_dd_date"]) else "—")
-with c4:
-    st.metric("Total Trades",     int(run["kpi_total_trades"]) if not pd.isna(run["kpi_total_trades"]) else "—")
-    st.metric("Win Rate",         fmt_pct(run["kpi_win_rate"]))
-    st.metric("Profit Factor",    fmt_num(run["kpi_profit_factor"], 2))
+    st.metric("Total Trades",  int(run["kpi_total_trades"]) if not pd.isna(run["kpi_total_trades"]) else "—")
+    st.metric("Win Rate",      fmt_pct(run["kpi_win_rate"]))
+    st.metric("Profit Factor", fmt_num(run["kpi_profit_factor"], 2))
 
 st.divider()
 
@@ -249,11 +303,9 @@ if run.get("in_withdrawals_on"):
                        help="Months before the withdrawal start date")
 
 # ─────────────────────────────────────────────────────────────────────────
-# Charts (require the trade log)
+# Charts (require the trade log — already loaded above for the equity cards)
 # ─────────────────────────────────────────────────────────────────────────
 st.divider()
-tlog = load_trade_log(selected_run_id)
-
 if tlog.empty:
     st.warning(f"No trade log rows found for run {selected_run_id}.")
     st.stop()
@@ -406,6 +458,25 @@ if run.get("in_withdrawals_on"):
 # ─────────────────────────────────────────────────────────────────────────
 # Top 10 winning / losing trades — with entry context
 # ─────────────────────────────────────────────────────────────────────────
+# Win / Loss profile — the small-wins / big-losses shape of the strategy
+# ─────────────────────────────────────────────────────────────────────────
+st.divider()
+st.subheader("Win / Loss Profile")
+st.caption("A 7-DTE, 10-delta credit spread is lots of small wins and a few big losses — "
+           "these size that. A win/loss ratio below 1 means each win is smaller than each loss; "
+           "the high win rate is what makes it profitable.")
+w1, w2, w3, w4, w5 = st.columns(5)
+with w1: st.metric("Win Rate", fmt_pct(run["kpi_win_rate"]))
+with w2: st.metric("Avg Win", fmt_money0(run["kpi_avg_win"]))
+with w3: st.metric("Avg Loss", fmt_money0(run["kpi_avg_loss"]))
+with w4:
+    _wl = run["kpi_win_loss_ratio"]
+    st.metric("Win/Loss Ratio", "—" if pd.isna(_wl) else f"{float(_wl):.2f}",
+              help="Average win ÷ |average loss|. Below 1.0 means a typical win is smaller "
+                   "than a typical loss.")
+with w5: st.metric("Worst Loss", fmt_money0(run["kpi_biggest_loss"]))
+
+# ─────────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("Top 10 Winning & Losing Trades")
 explain("detail_top10")
@@ -424,6 +495,7 @@ else:
     per_trade = closes.groupby("closing_trade_num", as_index=False).agg(
         net_pnl=("realized_pnl_today", "sum"),
         exit_label=("exit_label", "last"),
+        exit_date=("trade_date", "last"),   # the day the trade actually closed (P&L books here)
     )
 
     # Entry context: one row per trade where entry_day == 1 (entry_date == trade_date).
@@ -439,6 +511,7 @@ else:
     spx = load_spx_daily()[["trade_date", "sma_200"]].copy()
     spx["entry_date"] = pd.to_datetime(spx["trade_date"])
     m["entry_date"] = pd.to_datetime(m["entry_date"])
+    m["exit_date"] = pd.to_datetime(m["exit_date"])
     m = m.merge(spx[["entry_date", "sma_200"]], on="entry_date", how="left")
 
     m["entry_spx"] = m["entry_spx"].astype(float)
@@ -453,6 +526,7 @@ else:
         cols = {
             "Trade #":    d["closing_trade_num"].astype(int),
             "Entry Date": d["entry_date"].dt.date.astype(str),
+            "Exit Date":  d["exit_date"].dt.date.astype(str),
             "Exit":       d["exit_label"].fillna("—"),
             "Net P&L":    d["net_pnl"].astype(float),
             "Entry SPX":  d["entry_spx"],
@@ -463,8 +537,8 @@ else:
         return pd.DataFrame(cols)
 
     colcfg = {
-        "Net P&L":         st.column_config.NumberColumn(format="$%.0f"),
-        "Entry SPX":       st.column_config.NumberColumn(format="%.2f"),
+        "Net P&L":         st.column_config.NumberColumn(format="$%,.0f"),
+        "Entry SPX":       st.column_config.NumberColumn(format="%,.0f"),
         "% above 200-SMA": st.column_config.NumberColumn(format="%.2f%%"),
     }
     if _ma_on:
@@ -505,6 +579,38 @@ elif row_filter == "Exit days":
     ]
 
 st.caption(f"{len(view_tlog):,} rows shown of {len(tlog):,}  ·  click a column header to sort")
-st.dataframe(view_tlog, use_container_width=True, height=600, hide_index=True)
+
+# Comma-format every numeric column for readability. SQL DECIMALs arrive as object/
+# Decimal, so coerce to float first (dtype checks alone would miss them). Per-column
+# overrides for precision; otherwise: whole numbers → 0 dp, big dollars → 0 dp, else 2 dp.
+_tl_cfg = {}
+_skip = {"trade_date", "entry_date", "expir_date", "product", "settlement",
+         "exit_reason", "withdrawal_status"}
+# Small, precision-sensitive values (deltas, fraction/ratio columns) → 4 decimals.
+_four_dp = {"short_delta", "long_delta", "pct_of_max_profit", "pct_otm_vs_short",
+            "drawdown_pct", "dd_vs_starting_pct", "dd_vs_target_cagr_pct"}
+# Index-level values that read better with cents than as a whole number → 2 decimals.
+_two_dp = {"spx_close", "trend_ma"}
+for _col in view_tlog.columns:
+    if _col in _skip:
+        continue
+    _num = pd.to_numeric(view_tlog[_col], errors="coerce")
+    _nonnull = _num.dropna()
+    if _nonnull.empty:
+        continue  # not a numeric column
+    view_tlog[_col] = _num
+    if _col in _four_dp:
+        _fmt = "%,.4f"                            # deltas & ratios — keep precision
+    elif _col in _two_dp:
+        _fmt = "%,.2f"                            # SPX close / trend MA — show cents
+    elif (_nonnull % 1 == 0).all():
+        _fmt = "%,d"                              # whole numbers (counts, widths, day_num)
+    elif _nonnull.abs().max() >= 1000:
+        _fmt = "%,.0f"                            # large dollar amounts — drop the cents
+    else:
+        _fmt = "%,.2f"                            # prices, per-share P&L — 2 decimals
+    _tl_cfg[_col] = st.column_config.NumberColumn(format=_fmt)
+st.dataframe(view_tlog, use_container_width=True, height=600, hide_index=True,
+             column_config=_tl_cfg)
 
 render_footer()

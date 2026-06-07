@@ -10,7 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from data.db import load_scenario_runs, load_spx_daily, check_password_gate, render_footer
-from data.docs import explain, guide_link
+from data.docs import explain, guide_link, risk_profile, profile_label
 
 # ─────────────────────────────────────────────────────────────────────────
 # Page config
@@ -50,15 +50,19 @@ df = df.copy()
 # selectable category so they are not silently dropped by the MA filter.
 df["trend_ma_display"] = df["in_trend_filter_ma"].fillna(OFF_LABEL)
 
-# Group code = leading token of the run label ( |CODE|... e.g. RE50-WD ).
+# Group code = leading token of the run label ( |CODE|... e.g. W50-C20k-WD ).
 df["group"] = df["run_label"].str.extract(r"^\|([^|]*)\|")[0].fillna("(ungrouped)")
 # Sizing dimensions as friendly display strings (DB values arrive as Decimal).
-_up = pd.to_numeric(df["in_upside_reinvest_pct"],    errors="coerce").fillna(0)
-_mg = pd.to_numeric(df["in_max_gross_pct_equity"],   errors="coerce").fillna(0)
-_ac = pd.to_numeric(df["in_gross_cap_activation_eq"], errors="coerce").fillna(0)
-df["reinv_disp"] = (_up * 100).round().astype(int).astype(str) + "%"
-df["maxg_disp"]  = (_mg * 100).round().astype(int).astype(str) + "%"
-df["activ_disp"] = "$" + (_ac / 1000).round().astype(int).astype(str) + "k"
+# Capped model: weekly $ at risk = MIN(weekly_risk_pct × equity, max_weekly_risk).
+#   weekly_risk_pct = % of equity at risk each week (default 50%),
+#   max_weekly_risk = hard $ ceiling (the risk dial); blank = uncapped.
+_wrp = pd.to_numeric(df["in_weekly_risk_pct"], errors="coerce")
+_cap = pd.to_numeric(df["in_max_weekly_risk"], errors="coerce")
+df["risk_pct_disp"] = _wrp.map(lambda v: f"{v*100:.0f}%"  if pd.notna(v) else "—")
+df["cap_disp"]      = _cap.map(lambda v: f"${v/1000:.0f}k" if pd.notna(v) else "Uncapped")
+# Friendly risk-profile names derived from the cap (the risk dial): Conservative … Maximum.
+df["risk_profile"]  = _cap.map(risk_profile)
+df["profile_label"] = _cap.map(profile_label)
 _sc = pd.to_numeric(df["in_starting_capital"], errors="coerce").fillna(0)
 df["start_disp"] = "$" + (_sc / 1000).round().astype(int).astype(str) + "k"
 
@@ -70,21 +74,24 @@ st.sidebar.header("Filters")
 group_opts = sorted(df["group"].unique().tolist())
 sel_groups = st.sidebar.multiselect(
     "Group", group_opts, default=group_opts,
-    help="Sizing/withdrawal regime from the run label, e.g. RE50-WD "
-         "(RE50 = 50% upside reinvest; WD = withdrawals on; NW = none). "
-         "FIX = fixed base sizing, no reinvest.")
+    help="Cap level + withdrawal flag from the run label, e.g. W50-C20k-NW "
+         "(W50 = 50% weekly risk; C20k = $20k hard cap; NW = no withdrawals, WD = on). "
+         "Tighter cap = more conservative; uncapped = most aggressive.")
 
-st.sidebar.caption("**Sizing**")
-reinv_opts = sorted(df["reinv_disp"].unique().tolist(), key=lambda s: int(s.rstrip("%")))
-sel_reinv = st.sidebar.multiselect("Upside reinvest %", reinv_opts, default=reinv_opts)
-maxg_opts = sorted(df["maxg_disp"].unique().tolist(), key=lambda s: int(s.rstrip("%")))
-sel_maxg = st.sidebar.multiselect("Max gross % of equity", maxg_opts, default=maxg_opts)
-activ_opts = sorted(df["activ_disp"].unique().tolist(), key=lambda s: int(s.strip("$k")))
-sel_activ = st.sidebar.multiselect("Gross-cap activation", activ_opts, default=activ_opts)
-start_opts = sorted(df["start_disp"].unique().tolist(), key=lambda s: int(s.strip("$k")))
-sel_start = st.sidebar.multiselect("Starting capital", start_opts, default=start_opts,
-    help="Distinguishes same-regime groups that differ only by account size "
-         "(e.g. RE50-WD at $40k vs $100k).")
+st.sidebar.caption("**Sizing (cap = risk dial)**")
+_prof_order = ["Conservative", "Cautious", "Moderate", "Aggressive", "Maximum"]
+prof_opts = [p for p in _prof_order if p in df["risk_profile"].unique().tolist()]
+sel_prof = st.sidebar.multiselect("Risk profile", prof_opts, default=prof_opts,
+    help="Plain-language tier from the weekly \\$ cap: Conservative (\\$20k), Cautious (\\$30k), "
+         "Moderate (\\$50k), Aggressive (\\$75k), Maximum (uncapped).")
+cap_opts = sorted(df["cap_disp"].unique().tolist(),
+                  key=lambda s: int(s.strip("$k")) if s.startswith("$") else 10**9)
+sel_cap = st.sidebar.multiselect("Max weekly risk (cap)", cap_opts, default=cap_opts,
+    help="The hard $ ceiling on weekly risk — the risk dial. 'Uncapped' rides "
+         "the full weekly-risk % the whole way.")
+risk_opts = sorted(df["risk_pct_disp"].unique().tolist())
+sel_risk = st.sidebar.multiselect("Weekly risk %", risk_opts, default=risk_opts,
+    help="% of the account at risk each week (50% is the standard).")
 
 st.sidebar.caption("**Strategy**")
 ma_options = sorted(df["trend_ma_display"].unique().tolist())
@@ -103,14 +110,12 @@ withdrawals_filter = st.sidebar.radio(
 filtered = df.copy()
 if sel_groups:
     filtered = filtered[filtered["group"].isin(sel_groups)]
-if sel_reinv:
-    filtered = filtered[filtered["reinv_disp"].isin(sel_reinv)]
-if sel_maxg:
-    filtered = filtered[filtered["maxg_disp"].isin(sel_maxg)]
-if sel_activ:
-    filtered = filtered[filtered["activ_disp"].isin(sel_activ)]
-if sel_start:
-    filtered = filtered[filtered["start_disp"].isin(sel_start)]
+if sel_prof:
+    filtered = filtered[filtered["risk_profile"].isin(sel_prof)]
+if sel_cap:
+    filtered = filtered[filtered["cap_disp"].isin(sel_cap)]
+if sel_risk:
+    filtered = filtered[filtered["risk_pct_disp"].isin(sel_risk)]
 if selected_mas:
     filtered = filtered[filtered["trend_ma_display"].isin(selected_mas)]
 if selected_widths:
@@ -153,14 +158,16 @@ def _card(container, title, row, value_fn, sub_fn=None):
             st.metric(title, "—")
         else:
             rid = int(row["run_id"])
-            st.metric(title, value_fn(row), help=str(row["run_label"] or ""))
+            st.metric(title, value_fn(row), help=str(row["run_label"] or "").replace("$", "\\$"))
             if sub_fn:
-                st.caption(sub_fn(row))   # the other two metrics, smaller; wraps (no arrow/clipping)
+                # escape $ so dollar amounts in the subtext don't render as LaTeX math
+                st.caption(sub_fn(row).replace("$", "\\$"))   # the other two metrics, smaller
             st.markdown(f"[Run #{rid} →](Run_Detail?run_id={rid})")
 
 # NaN-safe formatters for the parenthetical "other two metrics" shown on each card.
-def _r2(v):  return "—" if pd.isna(v) else f"{float(v):.2f}"          # ratio (Calmar)
-def _pct(v): return "—" if pd.isna(v) else f"{float(v) * 100:.2f}%"   # CAGR / Max DD
+def _r2(v):    return "—" if pd.isna(v) else f"{float(v):.2f}"          # ratio (Calmar)
+def _pct(v):   return "—" if pd.isna(v) else f"{float(v) * 100:.2f}%"   # CAGR / Max DD
+def _money(v): return "—" if pd.isna(v) else f"${float(v):,.0f}"       # $ amounts (avg win/loss)
 
 if not filtered.empty:
     explain("summary_cards", "ⓘ  About these cards")
@@ -178,6 +185,15 @@ if not filtered.empty:
     _card(b1, "Best Sharpe",        _best("kpi_sharpe"),        lambda r: f"{r['kpi_sharpe']:.2f}")
     _card(b2, "Best Sortino",       _best("kpi_sortino"),       lambda r: f"{r['kpi_sortino']:.2f}")
     _card(b3, "Best Profit Factor", _best("kpi_profit_factor"), lambda r: f"{r['kpi_profit_factor']:.2f}")
+
+    # Win/loss profile cards — the "small wins, big losses" shape
+    c1, c2, c3 = st.columns(3)
+    _card(c1, "Highest Win Rate",    _best("kpi_win_rate"),       lambda r: f"{r['kpi_win_rate']:.2%}",
+          lambda r: f"(W/L {_r2(r['kpi_win_loss_ratio'])}, Avg Loss {_money(r['kpi_avg_loss'])})")
+    _card(c2, "Best Win/Loss Ratio", _best("kpi_win_loss_ratio"), lambda r: f"{r['kpi_win_loss_ratio']:.2f}",
+          lambda r: f"(Avg Win {_money(r['kpi_avg_win'])}, Avg Loss {_money(r['kpi_avg_loss'])})")
+    _card(c3, "Smallest Worst Loss", _best("kpi_biggest_loss"),   lambda r: f"${r['kpi_biggest_loss']:,.0f}",
+          lambda r: f"(CAGR {_pct(r['kpi_cagr'])}, Width ${int(float(r['in_spread_width']))})")
 
 st.divider()
 
@@ -199,14 +215,29 @@ plot_df = chart_df.dropna(subset=["kpi_max_dd_pct", "kpi_cagr"])
 _sel_rids = []
 if plot_df.empty:
     st.info("No runs with completed trades to plot. These scenarios recorded **0 trades** — "
-            "the most common cause is a sizing input that caps weekly exposure to \\$0 "
-            "(e.g. Max Gross % = 0 with Activation Equity = \\$0).")
+            "the most common cause is a cap too small to afford one spread at the "
+            "chosen width (e.g. a low start% at the \\$200 width, where the cap stays under "
+            "\\$20k — one contract — until equity grows).")
 else:
+    # Order the trend-MA legend: filter-off first, then ema's and sma's by ascending period.
+    def _ma_key(s):
+        if s == OFF_LABEL:
+            return (0, "", 0)
+        pre, _, rest = s.partition("_")
+        num = ""
+        for ch in rest:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        return (1, pre, int(num) if num else 0, s)
+    _ma_order = sorted(plot_df["trend_ma_display"].unique().tolist(), key=_ma_key)
     fig = px.scatter(
         plot_df,
         x="kpi_max_dd_pct",
         y="kpi_cagr",
         color="trend_ma_display",
+        category_orders={"trend_ma_display": _ma_order},
         size="_size",
         custom_data=["run_id", "run_label", "kpi_sharpe", "kpi_sortino",
                      "kpi_calmar", "kpi_total_trades", "in_spread_width"],
@@ -236,6 +267,12 @@ else:
             x=[p[0] for p in _front], y=[p[1] for p in _front], mode="lines",
             line=dict(color="rgba(220,220,220,0.65)", width=2, dash="dot"),
             name="Efficient frontier", hoverinfo="skip"))
+
+    # Legend entry for the dashed Calmar rays (drawn as shapes below — no auto-legend).
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="lines",
+        line=dict(color="rgba(130,170,210,0.8)", width=1, dash="dash"),
+        name="Calmar rays", hoverinfo="skip"))
 
     # SPX buy-and-hold benchmark over the runs' window (price return, from SPX_Daily_MAs).
     _spx_cagr = _spx_dd = None
@@ -302,15 +339,19 @@ else:
         if len(_sel_rids) >= 2:
             st.markdown(f"↳ [Compare these {len(_sel_rids)} runs →](Compare?runs={','.join(map(str, _sel_rids))})")
     else:
-        st.caption("Dashed rays are constant-Calmar lines (slope from the origin = CAGR ÷ |Max DD|); "
-                   "a dot above a steeper ray has a higher Calmar. "
-                   "Tip: click a dot for its detail link. Shift-click more dots — or use the box/lasso "
-                   "tools in the chart's top-right toolbar — to select several and compare.")
+        st.caption(
+            "- Click a dot to open its detail.\n"
+            "- Shift-click more dots — or use the box / lasso tools at the chart's top-right — to select several.\n"
+            "- With two or more selected, a **Compare** link appears here.\n"
+            "- The dashed rays are constant-Calmar lines (see ⓘ above)."
+        )
 
     if _spx_cagr is not None:
-        st.caption(f"★ **SPX buy & hold** over this period: CAGR {_spx_cagr*100:.1f}%, "
-                   f"Max DD {_spx_dd*100:.1f}% (price return, excl. dividends) — the gold ★ above. "
-                   "Points up and to the right of it beat the index on both return and drawdown.")
+        st.caption(
+            f"★ **SPX buy & hold** this period: CAGR {_spx_cagr*100:.1f}%, "
+            f"Max DD {_spx_dd*100:.1f}% (price return, excl. dividends).\n\n"
+            "Points up and to the right of the gold ★ beat the index on **both** return and drawdown."
+        )
 
 st.divider()
 
@@ -323,7 +364,7 @@ if filtered.empty:
     st.caption("No runs in the current filter.")
 else:
     _gd = filtered.copy()
-    for _c in ("kpi_cagr", "kpi_max_dd_pct", "kpi_calmar", "kpi_sharpe"):
+    for _c in ("kpi_cagr", "kpi_max_dd_pct", "kpi_calmar", "kpi_sharpe", "kpi_avg_loss", "kpi_win_loss_ratio"):
         _gd[_c] = pd.to_numeric(_gd[_c], errors="coerce")
     grp = (_gd.groupby("group")
               .agg(Runs=("run_id", "count"),
@@ -331,7 +372,9 @@ else:
                    BestCAGR=("kpi_cagr", "max"),
                    MedMaxDD=("kpi_max_dd_pct", "median"),
                    BestCalmar=("kpi_calmar", "max"),
-                   BestSharpe=("kpi_sharpe", "max"))
+                   BestSharpe=("kpi_sharpe", "max"),
+                   MedAvgLoss=("kpi_avg_loss", "median"),
+                   MedWL=("kpi_win_loss_ratio", "median"))
               .reset_index().rename(columns={"group": "Group"})
               .sort_values("BestCalmar", ascending=False))
     for _c in ("MedCAGR", "BestCAGR", "MedMaxDD"):
@@ -341,12 +384,15 @@ else:
         height=int((len(grp) + 1) * 35 + 3),
         column_config={
             "Group":      st.column_config.TextColumn("Group"),
-            "Runs":       st.column_config.NumberColumn("Runs", format="%d"),
+            "Runs":       st.column_config.NumberColumn("Runs", format="%,d"),
             "MedCAGR":    st.column_config.NumberColumn("Median CAGR", format="%.1f%%"),
             "BestCAGR":   st.column_config.NumberColumn("Best CAGR", format="%.1f%%"),
             "MedMaxDD":   st.column_config.NumberColumn("Median Max DD", format="%.1f%%"),
             "BestCalmar": st.column_config.NumberColumn("Best Calmar", format="%.2f"),
             "BestSharpe": st.column_config.NumberColumn("Best Sharpe", format="%.2f"),
+            "MedAvgLoss": st.column_config.NumberColumn("Median Avg Loss", format="$%,.0f"),
+            "MedWL":      st.column_config.NumberColumn("Median W/L", format="%.2f",
+                          help="Median win/loss ratio = avg win ÷ |avg loss|. Below 1 = wins are smaller than losses (the norm for this strategy)."),
         })
     st.caption("One row per group across the filtered set — median = the typical run, "
                "best = the top run in that group. Sorted by Best Calmar.")
@@ -357,11 +403,12 @@ st.divider()
 # Trend-filter summary — one row per trend_filter_ma (incl. (filter off))
 # ─────────────────────────────────────────────────────────────────────────
 st.subheader("By trend filter")
+explain("summary_trend")
 if filtered.empty:
     st.caption("No runs in the current filter.")
 else:
     _td = filtered.copy()
-    for _c in ("kpi_cagr", "kpi_max_dd_pct", "kpi_calmar", "kpi_sharpe"):
+    for _c in ("kpi_cagr", "kpi_max_dd_pct", "kpi_calmar", "kpi_sharpe", "kpi_avg_loss", "kpi_win_loss_ratio"):
         _td[_c] = pd.to_numeric(_td[_c], errors="coerce")
     tf = (_td.groupby("trend_ma_display")
              .agg(Runs=("run_id", "count"),
@@ -369,7 +416,9 @@ else:
                   MedMaxDD=("kpi_max_dd_pct", "median"),
                   MedCalmar=("kpi_calmar", "median"),
                   BestCalmar=("kpi_calmar", "max"),
-                  BestSharpe=("kpi_sharpe", "max"))
+                  BestSharpe=("kpi_sharpe", "max"),
+                  MedAvgLoss=("kpi_avg_loss", "median"),
+                  MedWL=("kpi_win_loss_ratio", "median"))
              .reset_index().rename(columns={"trend_ma_display": "Trend MA"})
              .sort_values("MedCalmar", ascending=False))
     for _c in ("MedCAGR", "MedMaxDD"):
@@ -379,12 +428,15 @@ else:
         height=int((len(tf) + 1) * 35 + 3),
         column_config={
             "Trend MA":   st.column_config.TextColumn("Trend MA"),
-            "Runs":       st.column_config.NumberColumn("Runs", format="%d"),
+            "Runs":       st.column_config.NumberColumn("Runs", format="%,d"),
             "MedCAGR":    st.column_config.NumberColumn("Median CAGR", format="%.1f%%"),
             "MedMaxDD":   st.column_config.NumberColumn("Median Max DD", format="%.1f%%"),
             "MedCalmar":  st.column_config.NumberColumn("Median Calmar", format="%.2f"),
             "BestCalmar": st.column_config.NumberColumn("Best Calmar", format="%.2f"),
             "BestSharpe": st.column_config.NumberColumn("Best Sharpe", format="%.2f"),
+            "MedAvgLoss": st.column_config.NumberColumn("Median Avg Loss", format="$%,.0f"),
+            "MedWL":      st.column_config.NumberColumn("Median W/L", format="%.2f",
+                          help="Median win/loss ratio = avg win ÷ |avg loss|. A slower filter trading fewer, better trades shows up as a higher ratio."),
         })
     st.caption("One row per trend-filter MA across the filtered set — each MA spans the same "
                "group×width configs, so this is apples-to-apples. Median = the typical run. "
@@ -410,6 +462,9 @@ sort_options = {
     "Ending Equity (desc)": ("kpi_ending_equity",    False),
     "Total Trades (desc)":  ("kpi_total_trades",     False),
     "Win Rate (desc)":      ("kpi_win_rate",         False),
+    "Win/Loss Ratio (desc)": ("kpi_win_loss_ratio",  False),
+    "Avg Loss (least bad)":  ("kpi_avg_loss",        False),
+    "Worst Loss (least bad)": ("kpi_biggest_loss",   False),
 }
 sort_label = st.selectbox("Sort by", list(sort_options.keys()))
 sort_col, sort_asc = sort_options[sort_label]
@@ -419,17 +474,19 @@ sorted_df = filtered.sort_values(sort_col, ascending=sort_asc).reset_index(drop=
 sorted_df["drill_url"] = "Run_Detail?run_id=" + sorted_df["run_id"].astype(str)
 
 display_cols = [
-    "drill_url", "run_label", "trend_ma_display", "in_spread_width",
+    "drill_url", "risk_profile", "run_label", "trend_ma_display", "in_spread_width",
     "kpi_ending_equity", "kpi_cagr", "kpi_max_dd_pct", "kpi_calmar",
     "kpi_ann_return_stdev", "kpi_sharpe", "kpi_sortino",
     "kpi_total_trades", "kpi_win_rate", "kpi_profit_factor",
+    "kpi_avg_win", "kpi_avg_loss", "kpi_win_loss_ratio", "kpi_biggest_loss",
 ]
 view = sorted_df[display_cols].copy()
 view.columns = [
-    "Run #", "Label", "Trend MA", "Width",
+    "Run #", "Profile", "Label", "Trend MA", "Width",
     "Ending Equity", "CAGR", "Max DD", "Calmar",
     "Ann Vol", "Sharpe", "Sortino",
     "Trades", "Win Rate", "PF",
+    "Avg Win", "Avg Loss", "W/L", "Worst Loss",
 ]
 # Pre-multiply ratio columns by 100 so the % format renders as "14.32%" not "0.14%".
 for pct_col in ("CAGR", "Max DD", "Win Rate", "Ann Vol"):
@@ -442,7 +499,8 @@ st.dataframe(
     height=500,
     column_config={
         "Run #":         st.column_config.LinkColumn("Run #", display_text=r"run_id=(\d+)", width="small"),
-        "Ending Equity": st.column_config.NumberColumn(format="$%.0f"),
+        "Ending Equity": st.column_config.NumberColumn(format="$%,.0f"),
+        "Trades":        st.column_config.NumberColumn(format="%,d"),
         "CAGR":          st.column_config.NumberColumn(format="%.2f%%"),
         "Max DD":        st.column_config.NumberColumn(format="%.2f%%"),
         "Calmar":        st.column_config.NumberColumn(format="%.2f"),
@@ -451,6 +509,11 @@ st.dataframe(
         "Sortino":       st.column_config.NumberColumn(format="%.2f"),
         "Win Rate":      st.column_config.NumberColumn(format="%.2f%%"),
         "PF":            st.column_config.NumberColumn(format="%.2f"),
+        "Avg Win":       st.column_config.NumberColumn(format="$%,.0f"),
+        "Avg Loss":      st.column_config.NumberColumn(format="$%,.0f"),
+        "W/L":           st.column_config.NumberColumn(format="%.2f",
+                         help="Avg win ÷ |avg loss| — below 1 means each win is smaller than each loss."),
+        "Worst Loss":    st.column_config.NumberColumn(format="$%,.0f"),
     },
 )
 
@@ -463,9 +526,11 @@ with st.expander("About this dashboard & metric definitions"):
     st.markdown(
         """
 **Strategy.** SPX weekly put credit spreads: enter each Friday (or Thursday before a holiday),
-sell the ~10-delta put, buy the put $50 lower (default), hold to expiration with optional
-breach and 1-DTE close rules. Position sizing is a dynamic cap that reinvests a share of
-profits, with a gated 25%-of-equity gross-exposure ceiling above $200k.
+sell the ~10-delta put, buy the put \\$50/\\$100/\\$200 lower, hold to expiration with optional
+breach and 1-DTE close rules. Position sizing is **simple and capped**: risk a set % of the
+account each week (default 50%), never more than a hard dollar ceiling —
+`weekly risk = MIN(weekly_risk_pct × equity, max_weekly_risk)`. The cap is the risk dial:
+tighter de-risks sooner; uncapped rides the full % the whole way.
 
 **Engine.** Every scenario is computed by a SQL Server engine cross-validated penny-for-penny
 against an Excel model. All P&L is NET of commission and slippage.

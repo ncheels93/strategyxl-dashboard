@@ -130,6 +130,88 @@ def load_spx_daily() -> pd.DataFrame:
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Scenario Requests — submit / list / complete / delete.
+# Needs WRITE access to dbo.Scenario_Requests (local Windows-auth has it; for the
+# cloud app, grant INSERT/UPDATE/DELETE on that one table to the dashboard's SQL user).
+# ─────────────────────────────────────────────────────────────────────────
+REQUEST_INPUT_COLS = [
+    "in_spread_width", "in_trend_filter_on", "in_trend_filter_ma",
+    "in_weekly_risk_pct", "in_max_weekly_risk", "in_withdrawals_on",
+    "in_target_monthly_withdrawal", "in_withdrawal_floor", "in_starting_capital",
+    "in_short_delta_threshold", "in_commission_per_contract", "in_slippage_per_leg",
+    "in_otm_close_threshold", "in_breach_close", "in_profit_target", "in_stop_loss",
+    "in_backtest_start", "in_backtest_end", "in_inflation_adjust_pct",
+]
+
+
+def insert_request(scenario_name: str, requested_by: str, inputs: dict) -> None:
+    cols = ["scenario_name", "requested_by"] + REQUEST_INPUT_COLS
+    params = {"scenario_name": scenario_name, "requested_by": (requested_by or None)}
+    params.update({c: inputs.get(c) for c in REQUEST_INPUT_COLS})
+    sql = (f"INSERT INTO dbo.Scenario_Requests ({', '.join(cols)}) "
+           f"VALUES ({', '.join(':' + c for c in cols)})")
+    with get_engine().begin() as cn:
+        cn.execute(text(sql), params)
+
+
+def load_requests() -> pd.DataFrame:
+    """All requests, newest first. Not cached — it changes on submit/complete/delete."""
+    return _read_sql("SELECT * FROM dbo.Scenario_Requests ORDER BY requested_at DESC")
+
+
+def complete_request(request_id: int, queue_name: str, notes: str | None = None) -> None:
+    with get_engine().begin() as cn:
+        cn.execute(text("UPDATE dbo.Scenario_Requests SET status='Complete', "
+                        "result_queue_name=:q, notes=:n WHERE request_id=:id"),
+                   {"q": queue_name, "n": (notes or None), "id": int(request_id)})
+
+
+def reopen_request(request_id: int) -> None:
+    with get_engine().begin() as cn:
+        cn.execute(text("UPDATE dbo.Scenario_Requests SET status='Pending', "
+                        "result_queue_name=NULL WHERE request_id=:id"), {"id": int(request_id)})
+
+
+def delete_request(request_id: int) -> None:
+    with get_engine().begin() as cn:
+        cn.execute(text("DELETE FROM dbo.Scenario_Requests WHERE request_id=:id"),
+                   {"id": int(request_id)})
+
+
+def resolve_run_id(queue_name: str):
+    """Latest run_id whose run_label equals this queue_name — for deep-linking a completed
+    request to its results. Returns int or None (run not present yet)."""
+    if not queue_name:
+        return None
+    df = _read_sql("SELECT TOP 1 run_id FROM dbo.Scenario_Runs WHERE run_label = :q "
+                   "ORDER BY run_id DESC", {"q": queue_name})
+    return int(df["run_id"].iloc[0]) if not df.empty else None
+
+
+def request_for_run_label(run_label: str):
+    """The completed request (if any) that produced a run with this label — lets Run Detail
+    show who requested it. Returns a dict {scenario_name, requested_by} or None."""
+    if not run_label:
+        return None
+    df = _read_sql("SELECT TOP 1 scenario_name, requested_by FROM dbo.Scenario_Requests "
+                   "WHERE result_queue_name = :q AND status = 'Complete' "
+                   "ORDER BY requested_at DESC", {"q": run_label})
+    return None if df.empty else df.iloc[0].to_dict()
+
+
+def admin_unlocked(label: str = "Operator passcode (to complete / delete)") -> bool:
+    """Sidebar passcode gate for destructive actions. Reads [admin] code from secrets;
+    falls back to a local default so it works in dev. Set a real code in secrets for prod."""
+    expected = (_secrets_section("admin") or {}).get("code", "operator")
+    if st.session_state.get("_admin_ok"):
+        return True
+    code = st.sidebar.text_input(label, type="password", key="_admin_code")
+    if code and code == str(expected):
+        st.session_state["_admin_ok"] = True
+    return bool(st.session_state.get("_admin_ok"))
+
+
 def render_footer() -> None:
     """Shared StrategyXL footer link — call at the bottom of every page so the
     branding reads as consistent attribution, not a per-page ad. Understated:

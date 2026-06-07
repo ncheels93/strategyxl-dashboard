@@ -108,10 +108,10 @@ CREATE TABLE dbo.Scenario_Runs (
     kpi_realized_pnl            DECIMAL(18,4)   NULL,
     kpi_max_dd_pct              DECIMAL(10,8)   NULL,
     kpi_max_dd_date             DATE            NULL,
-    kpi_calmar                  DECIMAL(10,8)   NULL,
+    kpi_calmar                  DECIMAL(18,8)   NULL,    -- widened (10,8)->(18,8): matches local
     kpi_total_trades            INT             NULL,
     kpi_win_rate                DECIMAL(10,8)   NULL,
-    kpi_profit_factor           DECIMAL(10,8)   NULL,
+    kpi_profit_factor           DECIMAL(18,8)   NULL,    -- widened: profit_factor up to ~118 overflowed (10,8)
 
     -- Friction (Block K — wired 2026-05-26)
     kpi_cum_commission          DECIMAL(18,4)   NULL,
@@ -138,9 +138,21 @@ CREATE TABLE dbo.Scenario_Runs (
     kpi_pct_days_below_target   DECIMAL(10,8)   NULL,
 
     -- Risk-adjusted metrics (monthly returns, FRED risk-free, Sortino MAR=0, annualized ×√12)
-    kpi_ann_return_stdev        DECIMAL(10,8)   NULL,
-    kpi_sharpe                  DECIMAL(10,8)   NULL,
-    kpi_sortino                 DECIMAL(10,8)   NULL,
+    -- Widened (10,8)->(18,8) to match local — the narrow type overflowed on large ratios.
+    kpi_ann_return_stdev        DECIMAL(18,8)   NULL,
+    kpi_sharpe                  DECIMAL(18,8)   NULL,
+    kpi_sortino                 DECIMAL(18,8)   NULL,
+
+    -- Capped sizing model (in_sizing_mode='capped' → weekly $ = MIN(weekly_risk_pct×equity, cap))
+    in_sizing_mode              VARCHAR(10)     NULL,
+    in_weekly_risk_pct          DECIMAL(6,4)    NULL,
+    in_max_weekly_risk          DECIMAL(18,2)   NULL,    -- NULL = uncapped
+
+    -- Win/loss profile KPIs (the "small wins, occasional big loss" shape)
+    kpi_avg_win                 DECIMAL(18,2)   NULL,
+    kpi_avg_loss                DECIMAL(18,2)   NULL,
+    kpi_biggest_loss            DECIMAL(18,2)   NULL,
+    kpi_win_loss_ratio          DECIMAL(18,8)   NULL,
 
     CONSTRAINT pk_scenario_runs PRIMARY KEY CLUSTERED (run_id)
 );
@@ -378,3 +390,53 @@ END
 ELSE
     PRINT 'dbo.SPX_Daily_MAs already exists — left as-is.';
 GO
+
+-- ===========================================================
+-- dbo.Scenario_Requests — Request-a-Run submissions. The dashboard WRITES here
+-- (everything else it only reads). GUARDED create (NOT drop+recreate): this holds
+-- user-submitted requests, so re-running this script must never wipe them. The app
+-- reads/writes by column NAME, so this column order is independent of other tables.
+-- ===========================================================
+IF OBJECT_ID('dbo.Scenario_Requests', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Scenario_Requests (
+        request_id          INT IDENTITY(1,1) NOT NULL,
+        requested_at        DATETIME2       NOT NULL CONSTRAINT df_screq_at DEFAULT SYSDATETIME(),
+        requested_by        NVARCHAR(100)   NULL,
+        scenario_name       NVARCHAR(200)   NOT NULL,
+        status              VARCHAR(20)     NOT NULL CONSTRAINT df_screq_status DEFAULT 'Pending',
+        result_queue_name   NVARCHAR(300)   NULL,
+        notes               NVARCHAR(500)   NULL,
+        in_spread_width              DECIMAL(8,2)  NOT NULL,
+        in_trend_filter_on           BIT           NOT NULL,
+        in_trend_filter_ma           VARCHAR(20)   NULL,
+        in_weekly_risk_pct           DECIMAL(6,4)  NOT NULL,
+        in_max_weekly_risk           DECIMAL(18,2) NULL,
+        in_withdrawals_on            BIT           NOT NULL,
+        in_target_monthly_withdrawal DECIMAL(18,2) NULL,
+        in_withdrawal_floor          DECIMAL(18,2) NULL,
+        in_starting_capital          DECIMAL(18,2) NOT NULL,
+        in_short_delta_threshold     DECIMAL(6,4)  NOT NULL,
+        in_commission_per_contract   DECIMAL(8,4)  NOT NULL,
+        in_slippage_per_leg          DECIMAL(8,4)  NOT NULL,
+        in_otm_close_threshold       DECIMAL(6,4)  NULL,
+        in_breach_close              BIT           NOT NULL,
+        in_profit_target             DECIMAL(6,4)  NULL,
+        in_stop_loss                 DECIMAL(6,4)  NULL,
+        in_backtest_start            DATE          NOT NULL,
+        in_backtest_end              DATE          NOT NULL,
+        in_inflation_adjust_pct      DECIMAL(6,4)  NULL,
+        CONSTRAINT pk_scenario_requests PRIMARY KEY CLUSTERED (request_id)
+    );
+    PRINT 'Created dbo.Scenario_Requests';
+END
+ELSE
+    PRINT 'dbo.Scenario_Requests already exists — left as-is (requests preserved).';
+GO
+
+-- WRITE GRANT — the app needs INSERT/UPDATE/DELETE on this one table (it only reads
+-- the rest). Grant to whatever login the dashboard's [database] secret connects as.
+-- If that login is the server admin 'sqladmin', it already has full rights and no
+-- grant is needed. Uncomment + set the login before running if it's a separate user:
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.Scenario_Requests TO [<APP_DB_LOGIN>];
+-- GO

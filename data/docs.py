@@ -28,6 +28,59 @@ def guide_link() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Capped sizing — friendly risk-profile names + the cap math (single source).
+#   Weekly $ at risk = MIN(weekly_risk_pct × equity, max_weekly_risk).
+#   % of account at risk = MIN(weekly_risk_pct, max_weekly_risk / equity): starts
+#   at weekly_risk_pct and flattens to the cap as the account grows. The cap is the
+#   risk dial — tighter = smoother. max_weekly_risk NULL/blank ⇒ uncapped.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _isnull(v) -> bool:
+    return v is None or (isinstance(v, float) and v != v)   # None or NaN
+
+
+def risk_profile(max_weekly_risk) -> str:
+    """Map the weekly $ cap to a friendly risk-tier word (the cap is the risk dial)."""
+    if _isnull(max_weekly_risk):
+        return "Maximum"          # uncapped = most aggressive
+    try:
+        c = float(max_weekly_risk)
+    except (TypeError, ValueError):
+        return "—"
+    if c <= 20000:
+        return "Conservative"
+    if c <= 30000:
+        return "Cautious"
+    if c <= 50000:
+        return "Moderate"
+    return "Aggressive"
+
+
+def cap_display(max_weekly_risk) -> str:
+    """'$20k cap' or 'uncapped'."""
+    if _isnull(max_weekly_risk):
+        return "uncapped"
+    try:
+        return f"${float(max_weekly_risk) / 1000:.0f}k cap"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def profile_label(max_weekly_risk) -> str:
+    """Friendly profile, e.g. 'Conservative · $20k cap' or 'Maximum · uncapped'."""
+    return f"{risk_profile(max_weekly_risk)} · {cap_display(max_weekly_risk)}"
+
+
+def capped_risk_pct(weekly_risk_pct, max_weekly_risk, equity) -> float:
+    """The % of the account at risk in a week at a given equity level."""
+    p = float(weekly_risk_pct)
+    if _isnull(max_weekly_risk):
+        return p
+    return min(p, float(max_weekly_risk) / float(equity))
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Glossary — term → plain-English definition (as THIS dashboard computes it)
 # ─────────────────────────────────────────────────────────────────────────
 TERMS = {
@@ -61,10 +114,34 @@ TERMS = {
     "Profit Factor":
         "Gross profit ÷ gross loss across all trades. Above 1 means winners outweigh "
         "losers; 2.0 means $2 earned for every $1 lost.",
+    "Avg Win":
+        "The average net P&L of the trades that finished profitable — typically small (the "
+        "premium collected).",
+    "Avg Loss":
+        "The average net P&L of the losing trades (a negative number). It's several times "
+        "larger than the average win here — and the *average* (not median) is the honest gauge "
+        "because it captures the occasional big breach that a median would hide.",
+    "Win/Loss Ratio":
+        "Average win ÷ |average loss| — the payoff ratio. Below 1.0 means a typical win is "
+        "smaller than a typical loss; this strategy stays profitable on a high win rate, not "
+        "on big wins.",
+    "Worst Loss":
+        "The single largest losing trade over the backtest — the tail risk in one number.",
     "Net Realized P&L":
-        "Total booked profit/loss from closed trades, net of all commissions and slippage.",
+        "Total booked profit/loss from closed trades, net of all commissions and slippage. "
+        "This is *only* the trading result — it does **not** include interest earned on cash.",
+    "Starting Capital":
+        "The account balance the backtest begins with ($40k throughout this study).",
     "Ending Equity":
-        "The account value on the last day of the backtest.",
+        "The account value on the last day — **Starting Capital + Net Realized P&L + interest "
+        "earned on idle cash − any withdrawals** (plus the mark-to-market of any still-open "
+        "position). Interest on cash is why ending equity is *more* than starting + realized "
+        "P&L — and it's sizeable for low-risk, cash-heavy runs.",
+    "Max Weekly Risk":
+        "The hard dollar ceiling on how much can be at risk in a single week — the cap in the "
+        "sizing model. It equals the weekly-risk % of equity while the account is small, then "
+        "holds flat at the cap once the account grows past it (so the % at risk falls). "
+        "'Uncapped' means no ceiling — risk stays at the full % the whole way.",
     "Total Trades":
         "How many weekly spreads were actually entered — a trend filter or tight sizing "
         "can skip weeks, so this is usually below the number of weeks in the period.",
@@ -84,6 +161,11 @@ TERMS = {
         "The dotted line connects the “best-in-class” runs: for any given drawdown level, "
         "the run on the line delivered the highest return. Any run below the line is "
         "beaten by one on it.",
+    "Calmar rays":
+        "The faint dashed lines fanning out from the origin are constant-Calmar lines. "
+        "Because Calmar = CAGR ÷ |Max Drawdown| is exactly the slope of the line from (0,0) "
+        "to a point, every dot on a given ray shares that Calmar — and a dot sitting above a "
+        "steeper ray has a higher Calmar. A quick visual read of risk-adjusted return.",
     "S&P benchmark (★)":
         "The gold star marks buy-and-hold of the S&P 500 over the same period (price "
         "return). Runs up and to the right of it beat the index on *both* return and "
@@ -98,37 +180,68 @@ SECTIONS = {
     # ---- Summary ----
     "summary_cards": (
         "The single best run for each headline metric across whatever the filters "
-        "currently show. On the top three cards, the small line gives the *other two* "
-        "metrics for that same run — so you can see the trade-off (the highest-CAGR run "
-        "is rarely the smoothest). Click **Run #N** to open its detail.",
-        ["CAGR", "Calmar", "Max Drawdown", "Sharpe", "Sortino", "Profit Factor"],
+        "currently show, in three rows:\n"
+        "- **Return & risk** — Best CAGR, Best Calmar, Lowest Max DD. The small line under "
+        "each gives the *other two* of these three for that same run, so you can see the "
+        "trade-off (the highest-CAGR run is rarely the smoothest).\n"
+        "- **Risk-adjusted** — Best Sharpe, Best Sortino, Best Profit Factor.\n"
+        "- **Trade profile** — Highest Win Rate, Best Win/Loss Ratio, and Smallest Worst "
+        "Loss (the single biggest losing trade). These capture the “lots of small wins, the "
+        "occasional big loss” shape of the strategy; their small line shows the supporting "
+        "win/loss figures.\n\n"
+        "Click **Run #N** on any card to open its detail.\n\n"
+        "**Sanity check:** a run that barely trades can post a flattering Calmar or Profit "
+        "Factor on a tiny sample — a tight cap at the $200 width may "
+        "take very few positions until equity grows. If a card looks too good, confirm its "
+        "**Total Trades** in the leaderboard before trusting it.",
+        ["CAGR", "Calmar", "Max Drawdown", "Sharpe", "Sortino", "Profit Factor",
+         "Win Rate", "Win/Loss Ratio", "Worst Loss", "Avg Win", "Avg Loss"],
     ),
     "summary_scatter": (
         "Every run plotted by **return (CAGR, vertical)** against **worst-case drawdown "
         "(horizontal)**. Up = more return; right = smaller drawdown — so the most "
         "attractive runs sit toward the top-right. Colour = trend-filter MA, bubble size "
         "= Calmar. The gold ★ is S&P buy-and-hold and the dotted line is the efficient "
-        "frontier. Click a dot to drill in; box/lasso-select several to compare.",
-        ["CAGR", "Max Drawdown", "Calmar", "Efficient frontier", "S&P benchmark (★)"],
+        "frontier.\n\n"
+        "The faint **dashed rays from the origin are constant-Calmar lines** — because Calmar "
+        "= CAGR ÷ |Max DD| is the slope from (0,0), a dot sitting above a steeper ray has a "
+        "higher Calmar, so you can read risk-adjusted return straight off the chart.\n\n"
+        "Click a dot to drill in; box/lasso-select several to compare.",
+        ["CAGR", "Max Drawdown", "Calmar", "Calmar rays", "Efficient frontier", "S&P benchmark (★)"],
     ),
     "summary_group": (
-        "A roll-up with one row per **group** (a sizing/withdrawal regime — e.g. RE50-WD), "
-        "so you can compare regimes without scanning every run. *Median* is the typical "
-        "run in the group; *Best* is its top run. Sorted by best Calmar.",
-        ["CAGR", "Max Drawdown", "Calmar", "Sharpe"],
+        "A roll-up with one row per **group** — a cap level + withdrawal flag, "
+        "e.g. W50-C20k-NW (50% weekly risk, $20k hard cap, no withdrawals). Compare cap "
+        "levels without scanning every run. Each row shows the **median** CAGR and Max DD "
+        "(the typical run in the group), the **best** CAGR / Calmar / Sharpe (its top run), "
+        "and the group's **win/loss profile** (Median Avg Loss, Median W/L). Sorted by best "
+        "Calmar.",
+        ["CAGR", "Max Drawdown", "Calmar", "Sharpe", "Avg Loss", "Win/Loss Ratio"],
+    ),
+    "summary_trend": (
+        "A roll-up with one row per **trend-filter moving average** — including "
+        "**(filter off)**, which takes every weekly entry. Because each MA spans the *same* "
+        "set of cap × width × withdrawal configurations, the rows are apples-to-apples: this "
+        "isolates what the trend filter alone does. Columns are mostly **medians** (the "
+        "typical run for that filter) — CAGR, Max DD, Calmar — plus the **best** Calmar / "
+        "Sharpe in the group and the **win/loss profile** (Median Avg Loss, Median W/L). "
+        "Sorted by **Median Calmar**: faster filters (9-day EMA, short SMAs) tend to lead, "
+        "the slow 50>200 regime trails. Where *By group* holds the filter fixed and turns "
+        "the cap, this view does the opposite — fixes the config and turns the filter.",
+        ["CAGR", "Max Drawdown", "Calmar", "Sharpe", "Avg Loss", "Win/Loss Ratio"],
     ),
     "summary_leaderboard": (
         "Every run in the current filter, ranked. Use **Sort by** (or click a column "
         "header) to re-rank, and click a **Run #** to open its full detail.",
         ["CAGR", "Max Drawdown", "Calmar", "Annualized Volatility", "Sharpe", "Sortino",
-         "Win Rate", "Profit Factor"],
+         "Win Rate", "Profit Factor", "Avg Win", "Avg Loss", "Win/Loss Ratio", "Worst Loss"],
     ),
     # ---- Run Detail ----
     "detail_kpis": (
         "Headline results for this one run — capital in and out, return, worst drawdown, "
-        "and trade statistics.",
-        ["Ending Equity", "Total Return", "CAGR", "Max Drawdown", "Net Realized P&L",
-         "Win Rate", "Profit Factor", "Total Trades"],
+        "the weekly risk cap, and trade statistics.",
+        ["Starting Capital", "Ending Equity", "Total Return", "CAGR", "Max Drawdown",
+         "Max Weekly Risk", "Net Realized P&L", "Win Rate", "Profit Factor", "Total Trades"],
     ),
     "detail_risk": (
         "Risk-adjusted measures, all computed from **monthly** returns and annualized.",
