@@ -90,6 +90,15 @@ TERMS = {
         "number that smooths out the good and bad years.",
     "Total Return":
         "The total percentage gain from the first day to the last — not annualized.",
+    "Money-Weighted Return (XIRR)":
+        "The internal rate of return on the actual cash flows — starting capital in, any "
+        "withdrawals out, ending value — annualized (ACT/365.25). For a no-withdrawal run it "
+        "equals CAGR; for a withdrawal run it credits the income taken along the way, so it's "
+        "the honest apples-to-apples return across withdrawal and non-withdrawal runs.",
+    "Total-Value Return":
+        "For withdrawal runs: the cumulative return counting BOTH the ending equity AND every "
+        "dollar withdrawn, versus starting capital. Plain Total Return is ending-equity only, so "
+        "it understates a run that paid out income along the way.",
     "Max Drawdown":
         "The largest peak-to-trough drop in account equity at any point in the backtest "
         "— the worst decline from a prior high-water mark. The best single gauge of "
@@ -131,7 +140,8 @@ TERMS = {
         "Total booked profit/loss from closed trades, net of all commissions and slippage. "
         "This is *only* the trading result — it does **not** include interest earned on cash.",
     "Starting Capital":
-        "The account balance the backtest begins with ($40k throughout this study).",
+        "The account balance the backtest begins with — varies by scenario across this study "
+        "($5k–$160k; $40k is the most common).",
     "Ending Equity":
         "The account value on the last day — **Starting Capital + Net Realized P&L + interest "
         "earned on idle cash − any withdrawals** (plus the mark-to-market of any still-open "
@@ -209,38 +219,30 @@ SECTIONS = {
         "Click a dot to drill in; box/lasso-select several to compare.",
         ["CAGR", "Max Drawdown", "Calmar", "Calmar rays", "Efficient frontier", "S&P benchmark (★)"],
     ),
-    "summary_group": (
-        "A roll-up with one row per **group** — a cap level + withdrawal flag, "
-        "e.g. W50-C20k-NW (50% weekly risk, $20k hard cap, no withdrawals). Compare cap "
-        "levels without scanning every run. Each row shows the **median** CAGR and Max DD "
-        "(the typical run in the group), the **best** CAGR / Calmar / Sharpe (its top run), "
-        "and the group's **win/loss profile** (Median Avg Loss, Median W/L). Sorted by best "
-        "Calmar.",
-        ["CAGR", "Max Drawdown", "Calmar", "Sharpe", "Avg Loss", "Win/Loss Ratio"],
-    ),
-    "summary_trend": (
-        "A roll-up with one row per **trend-filter moving average** — including "
-        "**(filter off)**, which takes every weekly entry. Because each MA spans the *same* "
-        "set of cap × width × withdrawal configurations, the rows are apples-to-apples: this "
-        "isolates what the trend filter alone does. Columns are mostly **medians** (the "
-        "typical run for that filter) — CAGR, Max DD, Calmar — plus the **best** Calmar / "
-        "Sharpe in the group and the **win/loss profile** (Median Avg Loss, Median W/L). "
-        "Sorted by **Median Calmar**: faster filters (9-day EMA, short SMAs) tend to lead, "
-        "the slow 50>200 regime trails. Where *By group* holds the filter fixed and turns "
-        "the cap, this view does the opposite — fixes the config and turns the filter.",
+    "summary_breakdowns": (
+        "A set of roll-ups — one row per category — across several dimensions (use the tabs): "
+        "**spread width**, **starting capital**, **max weekly risk** (the risk dial), "
+        "**trend filter**, and **withdrawals**. Each row shows the **median** CAGR / Max DD / "
+        "Calmar (the typical run in that bucket), the **best** CAGR / Calmar / Sharpe (its top "
+        "run), and the **win/loss profile** (Median Avg Loss, Median W/L). Because every bucket "
+        "spans the same surrounding configs, each tab isolates what that one dimension does. "
+        "Structural tabs are sorted naturally (small → large); the Trend filter tab is sorted by "
+        "Median Calmar.",
         ["CAGR", "Max Drawdown", "Calmar", "Sharpe", "Avg Loss", "Win/Loss Ratio"],
     ),
     "summary_leaderboard": (
         "Every run in the current filter, ranked. Use **Sort by** (or click a column "
         "header) to re-rank, and click a **Run #** to open its full detail.",
-        ["CAGR", "Max Drawdown", "Calmar", "Annualized Volatility", "Sharpe", "Sortino",
+        ["CAGR", "Money-Weighted Return (XIRR)", "Max Drawdown", "Calmar",
+         "Annualized Volatility", "Sharpe", "Sortino",
          "Win Rate", "Profit Factor", "Avg Win", "Avg Loss", "Win/Loss Ratio", "Worst Loss"],
     ),
     # ---- Run Detail ----
     "detail_kpis": (
         "Headline results for this one run — capital in and out, return, worst drawdown, "
         "the weekly risk cap, and trade statistics.",
-        ["Starting Capital", "Ending Equity", "Total Return", "CAGR", "Max Drawdown",
+        ["Starting Capital", "Ending Equity", "Total Return", "CAGR",
+         "Money-Weighted Return (XIRR)", "Max Drawdown",
          "Max Weekly Risk", "Net Realized P&L", "Win Rate", "Profit Factor", "Total Trades"],
     ),
     "detail_risk": (
@@ -263,8 +265,10 @@ SECTIONS = {
     "detail_withdrawals": (
         "How the withdrawal plan played out: how much was taken, what share of the "
         "target that covered, and a month-by-month breakdown of full / partial / skipped "
-        "payments.",
-        ["Coverage", "Months Full / Partial / Zero"],
+        "payments. The **Total-Value Return** counts the income already paid out (not just "
+        "ending equity), and the **per-year income chart + table** shows how much was "
+        "withdrawn each year against the inflation-adjusted target.",
+        ["Coverage", "Months Full / Partial / Zero", "Total-Value Return"],
     ),
     "detail_tradelog": (
         "The full day-by-day record behind this run — each trading day's position, option "
@@ -276,7 +280,8 @@ SECTIONS = {
     "compare_kpis": (
         "Side-by-side metrics for the selected runs; **green = best value in that row**. "
         "Withdrawal rows appear automatically when any selected run uses withdrawals.",
-        ["CAGR", "Max Drawdown", "Calmar", "Sharpe", "Sortino", "Profit Factor", "Coverage"],
+        ["CAGR", "Money-Weighted Return (XIRR)", "Total-Value Return", "Max Drawdown",
+         "Calmar", "Sharpe", "Sortino", "Profit Factor", "Coverage"],
     ),
     "compare_criteria": (
         "Only the inputs that **differ** across the selected runs — i.e. the knobs that "

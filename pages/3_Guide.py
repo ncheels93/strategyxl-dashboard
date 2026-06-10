@@ -22,13 +22,13 @@ md(
     "(or the Thursday before a holiday) the strategy:\n"
     "- **sells** an out-of-the-money put on the S&P 500 (SPX) about 10-delta — roughly a "
     "strike the market would have to fall to before the option matters,\n"
-    "- **buys** a further-out put below it (the “width”, e.g. $50/$100/$200 lower) as a "
+    "- **buys** a further-out put below it (the “width”, anywhere from $10 to $200 lower) as a "
     "defined-risk hedge,\n"
     "- **collects the net premium** and holds ~7 days to expiration, closing early on a "
     "breach or a 1-DTE rule.\n\n"
     "You win the premium when the market doesn't fall sharply through your short strike — "
     "which is most weeks. The risk is a fast, deep drop. The whole point of this dashboard "
-    "is to show, across **a systematic grid of 390 backtested configurations "
+    "is to show, across **a systematic grid of 990 backtested configurations "
     "(2007–2026)**, how different sizing, trend-filter and withdrawal choices trade "
     "return against that downside."
 )
@@ -37,8 +37,10 @@ md(
 st.header("2 · How the dashboard is organized")
 md(
     "- **Summary** — compare all runs at once: best-in-class cards, the CAGR-vs-drawdown "
-    "scatter (with the S&P star and efficient frontier), a by-group roll-up, and the full "
-    "leaderboard. The sidebar filters narrow everything on the page.\n"
+    "scatter (with the S&P star and efficient frontier), a **Breakdowns** section (roll-ups by "
+    "spread width, starting capital, max weekly risk, trend filter and withdrawals), and the "
+    "full leaderboard. The sidebar filters — led by a **performance screen** (slide a minimum "
+    "CAGR, worst-acceptable Max DD, or minimum Calmar) — narrow everything on the page.\n"
     "- **Run Detail** — drill into one run: full KPIs, risk-adjusted metrics, equity & "
     "drawdown charts, the ten biggest winners/losers with entry context, and (if used) the "
     "withdrawal breakdown.\n"
@@ -50,21 +52,7 @@ md(
     "weekly risk %, cap, withdrawals, and the friction/exit knobs). It joins a queue the "
     "operator runs; once it's complete you can click straight from the request to its results.\n\n"
     "Every section has an **ⓘ What is this?** popover with a quick explanation and the "
-    "definitions relevant to it."
-)
-md(
-    "**Requesting a run.** Anyone can propose a new backtest on the **Request a Run** page:\n"
-    "1. **Fill the form** — a **scenario name** (and your name), then the dials: spread "
-    "width, trend filter, weekly risk %, the cap (or *Uncapped*), and withdrawals. The "
-    "**Advanced** panel holds the friction/exit knobs (commission, slippage, profit target, "
-    "stop loss, dates); its defaults are the validated settings, and short delta is locked at "
-    "the 0.10 core strategy. Hit **Submit** and the request appears below as **Pending**.\n"
-    "2. **The operator runs it** on the backtest engine, then marks it **Complete** with the "
-    "run's name (its queue label). Submitting is open to everyone; only the operator (a "
-    "passcode) can complete or delete a request.\n"
-    "3. **Jump to results** — a completed request shows an **Open run →** link straight to its "
-    "results, and the Run Detail page notes who requested it. Every pending request also has a "
-    "**🔍 Full request details** view so the operator can see (or paste out) every setting."
+    "definitions relevant to it. Section **7** walks through requesting your own run."
 )
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -142,10 +130,9 @@ md(
 )
 
 # ─────────────────────────────────────────────────────────────────────────
-st.header("6 · Reading a group code & the filters")
+st.header("6 · Reading a run's label & the filters")
 md(
-    "Each run carries a short **group code** in its label that encodes the sizing, e.g. "
-    "**W50-C20k-WD**:\n"
+    "Each run carries a short **sizing code** in its label, e.g. **W50-C20k-WD**:\n"
     "- **W50** = Weekly Risk % — 50% of the account at risk each week.\n"
     "- **C20k** = the cap — never more than $20k at risk in a week (Uncap = no cap).\n"
     "- **-NW** = no withdrawals; **-WD** = withdrawals on.\n\n"
@@ -153,13 +140,38 @@ md(
     "**No PT / No SL** (no profit target or stop loss), **PT 50%** when a profit target is "
     "on, plus a flag if breach-close, commission, or slippage differs from the standard. "
     "You rarely need to read the raw code — the **Risk profile** name (Conservative → "
-    "Maximum) says the same thing in plain language. The sidebar **Risk profile** filter "
-    "jumps straight to a tier; the **Sizing** filters (weekly risk %, cap) and **Strategy** "
-    "filters (trend MA, width, withdrawals) slice across everything. All filters combine."
+    "Maximum) says the same thing in plain language.\n\n"
+    "The **sidebar filters** run top-to-bottom, most-used first:\n"
+    "- **Performance screen** — slide a minimum **CAGR**, a worst-acceptable **Max DD**, or a "
+    "minimum **Calmar**. These screen the *whole* page (cards, scatter, leaderboard) and shade "
+    "the kept region green on the scatter; each is off until you move it.\n"
+    "- **Structure** — spread width and starting capital.\n"
+    "- **Sizing** — risk profile, the cap, and weekly risk %.\n"
+    "- **Strategy** — the trend-filter MA.\n"
+    "- **Withdrawals** — on/off and the monthly target.\n\n"
+    "All filters combine."
 )
 
 # ─────────────────────────────────────────────────────────────────────────
-st.header("7 · Glossary")
+st.header("7 · Request a Run")
+md(
+    "Anyone can propose a new backtest from the **Request a Run** page — you fill a form, the "
+    "operator runs it on the engine, and you click straight through to the results:\n"
+    "1. **Fill the form** — give it a **scenario name** (and your name), then set the dials: "
+    "spread width, trend filter, weekly risk %, the cap (or *Uncapped*), and withdrawals. The "
+    "**Advanced** panel holds the friction/exit knobs (commission, slippage, profit target, "
+    "stop loss, dates); its defaults are the validated settings, and short delta is locked at "
+    "the 0.10 core strategy. Hit **Submit** and the request appears below as **Pending**.\n"
+    "2. **The operator runs it** on the backtest engine, then marks it **Complete** with the "
+    "run's name (its queue label). Submitting is open to everyone; only the operator (with a "
+    "passcode) can complete or delete a request.\n"
+    "3. **Jump to results** — a completed request shows an **Open run →** link straight to its "
+    "results, and the Run Detail page notes who requested it. Every pending request also has a "
+    "**🔍 Full request details** view so the operator can see (or paste out) every setting."
+)
+
+# ─────────────────────────────────────────────────────────────────────────
+st.header("8 · Glossary")
 md("Every metric on the dashboard, defined as it is computed here. All P&L is **net of "
    "commissions and slippage**; risk metrics use **monthly** returns with the 3-month "
    "T-bill as the risk-free rate.")
@@ -167,41 +179,80 @@ for _t, _d in TERMS.items():
     md(f"- **{_t}** — {_d}")
 
 # ─────────────────────────────────────────────────────────────────────────
-st.header("8 · Key findings")
+st.header("9 · Key findings")
 
 st.subheader("Versus simply holding the S&P 500")
 md(
     "Over 2007–2026 the S&P 500 returned roughly **9% a year (price) with a −56.8% worst "
-    "drawdown**. Every configuration here rides a small fraction of that pain. The table is "
-    "the peak-to-trough equity drawdown inside each major selloff for three representative "
-    "runs — all 50% weekly risk, width $100, no withdrawals — versus the index:"
+    "drawdown**. The representative runs below ride a small fraction of that pain — though the "
+    "most aggressive, narrowest configs in the full grid go far deeper (worst-case ≈ −63%). The "
+    "table is the peak-to-trough equity drawdown inside each major selloff for three "
+    "representative runs — all 50% weekly risk, width $100, no withdrawals — versus the index:"
 )
 md(
     "| Market cycle | S&P 500 | Conservative ($20k cap) | Aggressive (uncapped) | Conservative + 200-day filter |\n"
     "|---|--:|--:|--:|--:|\n"
-    "| GFC (2007–2009) | −56.8% | **−6.9%** | −6.9% | **−1.9%** |\n"
-    "| 2011 selloff | −19.4% | **−5.1%** | −5.1% | −13.7% |\n"
-    "| 2018 (vol spike + Q4) | −19.8% | −10.3% | −20.4% | −17.1% |\n"
-    "| COVID crash (2020) | −33.9% | **−7.4%** | −20.1% | −15.3% |\n"
-    "| 2022 bear market | −25.4% | **−7.0%** | −21.3% | −5.3% |\n"
+    "| GFC (2007–2009) | −56.8% | **−7.0%** | −7.0% | **−1.7%** |\n"
+    "| 2011 selloff | −19.2% | **−4.4%** | −4.4% | −13.2% |\n"
+    "| 2018 (vol spike + Q4) | −19.8% | −9.8% | −19.8% | −17.6% |\n"
+    "| COVID crash (2020) | −33.9% | **−1.5%** | −3.7% | −9.5% |\n"
+    "| 2022 bear market | −25.4% | **−6.5%** | −21.0% | −4.9% |\n"
 )
 md(
-    "**Full-period:** Conservative ($20k cap) **8.3% CAGR / −10.3% max DD**; Aggressive "
-    "(uncapped) **15.6% / −23.1%**; the 200-day-filter run **8.5% / −17.1%**.\n\n"
+    "**Full-period:** Conservative ($20k cap) **8.2% CAGR / −9.8% max DD**; Aggressive "
+    "(uncapped) **14.6% / −22.6%**; the 200-day-filter run **8.4% / −17.6%**.\n\n"
     "**Takeaways:**\n"
-    "- **The conservative cap rode every crisis in single digits to low teens** — GFC −6.9%, "
-    "COVID −7.4%, 2022 −7.0% — versus the index's −34% to −57%. That is the whole pitch: "
+    "- **The conservative cap rode every crisis in single digits** — GFC −7.0%, "
+    "COVID −1.5%, 2022 −6.5% — versus the index's −34% to −57%. That is the whole pitch: "
     "S&P-like return with a fraction of the drawdown.\n"
     "- **The cap is what absorbs the later crises.** The GFC and 2011 are identical for the "
     "$20k and uncapped runs — the account was still small, so both risked the same ~50%. By "
     "2018–2022 the account had grown, and the uncapped run rode those selloffs at full 50% "
-    "(−20%+), while the $20k cap held its exposure flat (−7 to −10%).\n"
-    "- **2018 is the binding drawdown** for the conservative cap (−10.3%), not 2008 — the "
+    "(−20%+), while the $20k cap held its exposure flat (−6 to −10%).\n"
+    "- **2018 is the binding drawdown** for the conservative cap (−9.8%), not 2008 — the "
     "February-2018 vol spike is this strategy's real stress test.\n"
-    "- **The 200-day trend filter is a mixed bag.** It shines in the slow GFC grind (−1.9%, "
-    "it sat out 2008) and in 2022, but it *whipsawed* in the sharp 2011 and 2018 selloffs "
-    "(−13.7%, −17.1%) by re-entering right before fast drops. The faster 9-day EMA filter "
-    "(the Conservative column) was steadier overall."
+    "- **The 200-day trend filter is a mixed bag.** It shines in the slow GFC grind (−1.7%, "
+    "it sat out 2008) and in 2022 (−4.9%), but it *whipsawed* in the sharp 2011 and 2018 "
+    "selloffs (−13.2%, −17.6%) by re-entering right before fast drops. The faster 9-day EMA "
+    "filter (the Conservative column) was steadier overall — and sidestepped COVID best (−1.5%)."
+)
+
+st.subheader("Across spread widths")
+md(
+    "The study spans five widths — **$10, $25, $50, $100, $200** — and they behave like "
+    "genuinely different products, not one strategy scaled up. Two reads of the same grid "
+    "(no withdrawals, ≥ 50 trades): the **best risk-adjusted** (Calmar) config at each width, "
+    "and the **top-end** config that chases the most CAGR:"
+)
+md(
+    "| Width | Best risk-adjusted (Calmar) config | CAGR | Max DD | Calmar | Top-end CAGR (its DD) |\n"
+    "|---|---|--:|--:|--:|--:|\n"
+    "| $10 | $20k @ 5%, ema_9 | 3.0% | −4.5% | 0.66 | 14.5% (−37%) |\n"
+    "| $25 | $50k @ 5%, sma_5 | 3.3% | −3.4% | 0.99 | 15.1% (−39%) |\n"
+    "| $50 | **$40k @ 50%, $30k cap, sma_5** | **11.4%** | **−13.3%** | **0.86** | 31.7% (−55%) |\n"
+    "| $100 | $80k @ 15%, $24k cap, sma_5 | 4.6% | −3.7% | 1.26 | 20.6% (−48%) |\n"
+    "| $200 | $160k @ 15%, $48k cap, sma_10 | 3.4% | −2.3% | **1.46** | 10.1% (−29%) |\n"
+)
+md(
+    "**Takeaways:**\n"
+    "- **$50 is the sweet spot for growth.** $50 at $40k with a $30k cap and the 5-day SMA "
+    "earns **11.4% CAGR at just −13.3% max DD (Calmar 0.86)** — the best blend of real return "
+    "and tolerable drawdown in the whole grid, and a simpler capped cousin to the headline "
+    "$100 configs.\n"
+    "- **The wide spreads ($100/$200) are for smoothness, not growth.** Scaled to the capital "
+    "they need ($80k / $160k), they post the highest Calmars (1.26 / **1.46**) at tiny "
+    "drawdowns (−3.7% / −2.3%) — but only 3–5% CAGR. They're capital-preservation tools.\n"
+    "- **The narrow spreads ($10/$25) need capital to be safe.** A $10-wide spread needs "
+    "$1,000 of collateral per contract, so a small account can only be *safe* by risking a tiny "
+    "% — which caps return near 3%. Pushed for return they reach ~15% CAGR, but at −37% to −39% "
+    "drawdowns. They suit genuinely small accounts that prize limited risk over growth.\n"
+    "- **Width must match capital.** Each width needs roughly **width × $100** of collateral per "
+    "contract, so the right width is the one your account can hold several contracts of — "
+    "$10–$25 for a few thousand, $50 around $40k, $100–$200 for $80k–$160k+.\n"
+    "- **Income scales with width *and* capital.** $250/mo is comfortably sustainable at $40k "
+    "(94–96% coverage on $50/$100); a **$1,000/mo** draw needs the **$200 width on a $160k "
+    "base** (77% coverage, account still roughly doubled), and $2,000/mo isn't sustainable on "
+    "any tier tested — that's a starting-capital limit, not a sizing one."
 )
 
 st.subheader("The cap is the risk dial")
@@ -213,11 +264,11 @@ md(
 md(
     "| Cap (risk profile) | CAGR | Max DD | Calmar |\n"
     "|---|--:|--:|--:|\n"
-    "| $20k — Conservative | 8.3% | −10.3% | **0.81** |\n"
-    "| $30k — Cautious | 9.8% | −13.3% | 0.73 |\n"
-    "| $50k — Moderate | 11.5% | −20.4% | 0.56 |\n"
-    "| $75k — Aggressive | 12.6% | −20.4% | 0.62 |\n"
-    "| Uncapped — Maximum | 15.6% | −23.1% | 0.68 |\n"
+    "| $20k — Conservative | 8.2% | −9.8% | **0.83** |\n"
+    "| $30k — Cautious | 9.6% | −12.8% | 0.75 |\n"
+    "| $50k — Moderate | 11.3% | −19.8% | 0.57 |\n"
+    "| $75k — Aggressive | 12.3% | −19.8% | 0.62 |\n"
+    "| Uncapped — Maximum | 14.6% | −22.6% | 0.65 |\n"
 )
 md(
     "Loosening the cap buys CAGR but drawdown grows faster, so risk-adjusted return (Calmar) "
@@ -229,8 +280,8 @@ st.subheader("A surprising amount of the return is interest on cash")
 md(
     "Because the conservative caps keep most of the account in cash, **interest on that cash "
     "(the 3-month T-bill rate, compounded daily) is a real contributor**, not a rounding "
-    "error. On a representative $20k-cap run, of the ~$148k total gain on a $40k start (the "
-    "account ends near $188k), about **$34k — roughly a quarter — was interest**, not option "
+    "error. On a representative $20k-cap run, of the ~$144k total gain on a $40k start (the "
+    "account ends near $184k), about **$30k — roughly a fifth — was interest**, not option "
     "premium. The Run "
     "Detail page breaks every run into Starting Capital + Net Realized P&L + Interest so you "
     "can see the split."
@@ -239,8 +290,9 @@ md(
 st.subheader("Withdrawals — what the account can sustain")
 md(
     "Drawing **$250/mo from a $40k account at 50% weekly risk is marginal** — it funded most "
-    "of the income but pulled the account down toward its floor (coverage ~90%, deep "
-    "drawdowns). The cap barely helps: a withdrawing account rarely grows enough for the cap "
+    "of the income but pulled the account down toward its floor (coverage ~94%, with deep "
+    "drawdowns and months pinned at the floor). The cap barely helps: a withdrawing account "
+    "rarely grows enough for the cap "
     "to bind, so the binding constraint is the **withdrawal rate relative to account size**, "
     "not the sizing. A bigger starting balance or a smaller monthly draw is the lever."
 )

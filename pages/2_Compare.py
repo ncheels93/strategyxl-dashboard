@@ -60,6 +60,8 @@ KPI_SPECS = [
     ("Ending Equity",    "kpi_ending_equity",    lambda v: f"${v:,.0f}",     "max"),
     ("Total Return",     "kpi_total_return_pct", lambda v: f"{v*100:,.2f}%", "max"),
     ("CAGR",             "kpi_cagr",             lambda v: f"{v*100:,.2f}%", "max"),
+    ("Money-Wtd (XIRR)", "kpi_xirr",             lambda v: f"{v*100:,.2f}%", "max"),
+    ("Total-Value Ret",  "kpi_total_value_return", lambda v: f"{v*100:,.2f}%", "max"),
     ("Max Drawdown",     "kpi_max_dd_pct",       lambda v: f"{v*100:,.2f}%", "max"),  # least negative = best
     ("Calmar",           "kpi_calmar",           lambda v: f"{v:.2f}",       "max"),
     ("Ann Volatility",   "kpi_ann_return_stdev", lambda v: f"{v*100:,.2f}%", "min"),

@@ -186,7 +186,7 @@ _interest_income = (float(pd.to_numeric(tlog["interest_today"], errors="coerce")
 explain("detail_kpis", "ⓘ  About these metrics")
 
 # Equity decomposition shown as an equation:
-#   Ending Equity = Starting Capital + Net Realized P&L + Interest Income (− Withdrawals)
+#   Ending Equity = Starting Capital + Net Realized P&L + Interest Income (+ Open Position) (− Withdrawals)
 _parts = [
     ("Ending Equity",    run["kpi_ending_equity"],   None,
      "Account value on the last day — the sum of everything to the right of the = sign."),
@@ -196,7 +196,22 @@ _parts = [
     ("Interest Income",  _interest_income,           "+",
      "Interest earned on the account's cash at the FRED 3-month T-bill rate, compounded daily."),
 ]
-if pd.notna(run.get("kpi_total_withdrawn")) and float(run.get("kpi_total_withdrawn") or 0) > 0:
+
+# Open position at the backtest end: if the final entry hadn't resolved by the end date
+# (entered in the last week, expiring after it), its credit is booked into equity but its P&L
+# is NOT counted in Net Realized P&L (only closed trades are). Show it as its own term so the
+# equation reconciles. ~0 (and hidden) when the backtest ends with no trade open.
+_withdrawn = float(run["kpi_total_withdrawn"]) if pd.notna(run.get("kpi_total_withdrawn")) else 0.0
+_open_pos = (float(run["kpi_ending_equity"]) - float(run["in_starting_capital"])
+             - float(run["kpi_realized_pnl"]) - _interest_income + _withdrawn)
+if abs(_open_pos) > 1.0:
+    _parts.append(("Open Position", abs(_open_pos), "+" if _open_pos >= 0 else "−",
+                   "Net unrealized value of the trade still open on the backtest's end date — its "
+                   "current mark-to-market less the commission paid to open it. It isn't in Net "
+                   "Realized P&L yet (the trade hasn't closed), so it's shown here so the equation "
+                   "foots exactly. Usually tiny — often just the open trade's entry commission."))
+
+if _withdrawn > 0:
     _parts.append(("Withdrawals", run["kpi_total_withdrawn"], "−",
                    "Total cash withdrawn over the backtest — reduces ending equity."))
 
@@ -223,6 +238,11 @@ c1, c2, c3 = st.columns(3)
 with c1:
     st.metric("Total Return", fmt_pct(run["kpi_total_return_pct"]))
     st.metric("CAGR",         fmt_pct(run["kpi_cagr"]))
+    st.metric("Money-Weighted Return (XIRR)", fmt_pct(run.get("kpi_xirr")),
+              help="Annualized internal rate of return over the actual cash flows (capital in, "
+                   "withdrawals out, ending value). Equals CAGR when there are no withdrawals; for "
+                   "withdrawal runs it credits the income taken along the way — the true "
+                   "apples-to-apples return across WD and non-WD runs.")
     st.metric("Years",        fmt_num(run["kpi_years"], 2))
 with c2:
     st.metric("Max Drawdown", fmt_pct(run["kpi_max_dd_pct"]))
@@ -278,18 +298,24 @@ if run.get("in_withdrawals_on"):
     st.subheader("Withdrawals")
     explain("detail_withdrawals")
     st.caption(
-        f"Target \\${run['in_target_monthly_withdrawal']:,.0f}/mo  ·  "
+        f"Starting target \\${run['in_target_monthly_withdrawal']:,.0f}/mo "
+        f"(grows +{fmt_pct(run['in_inflation_adjust_pct'])}/yr with inflation)  ·  "
         f"floor \\${run['in_withdrawal_floor']/1000:,.0f}k  ·  "
-        f"start {run['in_withdrawal_start_date']}  ·  "
-        f"inflation {fmt_pct(run['in_inflation_adjust_pct'])}"
+        f"start {run['in_withdrawal_start_date']}"
     )
+    st.metric("Total-Value Return", fmt_pct(run.get("kpi_total_value_return")),
+              help="Cumulative return counting BOTH ending equity AND every dollar withdrawn. "
+                   "Total Return (above) is ending-equity only, so it understates a withdrawal run.")
     c1, c2, c3, c4 = st.columns(4)
     with c1: st.metric("Total Withdrawn",  fmt_money0(run["kpi_total_withdrawn"]))
     with c2: st.metric("Coverage",         fmt_pct(run["kpi_coverage_pct"]),
                        help="Share of the inflation-adjusted target actually paid")
-    with c3: st.metric("Avg Monthly",      fmt_money0(run["kpi_avg_monthly_income"]))
+    with c3: st.metric("Avg Monthly",      fmt_money0(run["kpi_avg_monthly_income"]),
+                       help="Average actual monthly withdrawal. It exceeds the starting target "
+                            "because the target is inflation-adjusted — later years pay more, so "
+                            "the lifetime average lands above the starting $/mo figure.")
     with c4: st.metric("Worst Month",      fmt_money0(run["kpi_worst_single_month"]),
-                       help="Smallest non-zero monthly withdrawal")
+                       help="Smallest non-zero monthly withdrawal (an early, pre-inflation month)")
 
     def _miv(v): return "—" if pd.isna(v) else f"{int(v):,}"
     d1, d2, d3, d4 = st.columns(4)
@@ -301,6 +327,38 @@ if run.get("in_withdrawals_on"):
                        help="Months nothing was paid (already at/below floor)")
     with d4: st.metric("Months Not Started", _miv(run["kpi_months_not_started"]),
                        help="Months before the withdrawal start date")
+
+    # Per-year income (cash flow generated) — bar chart + year-by-year table
+    _w = tlog[["trade_date", "withdrawal_today", "target_withdrawal_today"]].copy()
+    _w["Year"] = pd.to_datetime(_w["trade_date"]).dt.year
+    _w["withdrawal_today"] = pd.to_numeric(_w["withdrawal_today"], errors="coerce").fillna(0.0)
+    _w["target_withdrawal_today"] = pd.to_numeric(_w["target_withdrawal_today"], errors="coerce").fillna(0.0)
+    _yr = _w.groupby("Year", as_index=False).agg(
+        Withdrawn=("withdrawal_today", "sum"),
+        Target=("target_withdrawal_today", "sum"),
+        MonthsPaid=("withdrawal_today", lambda s: int((s > 0).sum())),
+    )
+    _yr["Coverage"] = [(w / t) if t > 0 else float("nan")
+                       for w, t in zip(_yr["Withdrawn"], _yr["Target"])]
+
+    st.markdown("**Income generated per year**")
+    _figw = go.Figure()
+    _figw.add_trace(go.Bar(x=_yr["Year"], y=_yr["Withdrawn"], name="Withdrawn",
+                           marker_color="#2e7d32"))
+    _figw.add_trace(go.Scatter(x=_yr["Year"], y=_yr["Target"], name="Target (infl-adj)",
+                               mode="lines+markers", line=dict(color="#9aa0a6", dash="dot")))
+    _figw.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
+                        barmode="group", legend=dict(orientation="h", y=1.12, x=0))
+    _figw.update_yaxes(tickformat="$,.0f")
+    st.plotly_chart(_figw, use_container_width=True)
+
+    _disp = _yr.copy()
+    _disp["Target"] = _disp["Target"].map(lambda v: f"${v:,.0f}")
+    _disp["Withdrawn"] = _disp["Withdrawn"].map(lambda v: f"${v:,.0f}")
+    _disp["Coverage"] = _disp["Coverage"].map(lambda v: "—" if pd.isna(v) else f"{v * 100:.1f}%")
+    _disp = _disp.rename(columns={"MonthsPaid": "Months Paid"})
+    st.dataframe(_disp[["Year", "Target", "Withdrawn", "Coverage", "Months Paid"]],
+                 hide_index=True, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────────────
 # Charts (require the trade log — already loaded above for the equity cards)

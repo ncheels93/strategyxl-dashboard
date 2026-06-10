@@ -154,6 +154,10 @@ CREATE TABLE dbo.Scenario_Runs (
     kpi_biggest_loss            DECIMAL(18,2)   NULL,
     kpi_win_loss_ratio          DECIMAL(18,8)   NULL,
 
+    -- Money-weighted return + total-value return (XIRR block — _sql_38)
+    kpi_xirr                    DECIMAL(18,8)   NULL,
+    kpi_total_value_return      DECIMAL(12,8)   NULL,
+
     CONSTRAINT pk_scenario_runs PRIMARY KEY CLUSTERED (run_id)
 );
 GO
