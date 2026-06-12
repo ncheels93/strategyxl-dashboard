@@ -178,9 +178,11 @@ with st.container(border=True):
         a1, a2, a3 = st.columns(3)
         with a1:
             start_cap = st.number_input("Starting capital ($)", min_value=1000, value=40000, step=5000)
-            short_delta = st.number_input("Short delta (locked — 10Δ core strategy)",
-                                          value=0.10, disabled=True,
-                                          help="Fixed at the 0.10 short delta that defines the strategy.")
+            short_delta = st.selectbox("Short delta", options=[0.05, 0.10, 0.15, 0.20],
+                                       index=1, format_func=lambda v: f"{v*100:g}Δ ({v:.2f})",
+                                       help="Short-strike delta target. 10Δ is the core strategy; "
+                                            "5Δ is the conservative variant, 15Δ the aggressive one. "
+                                            "See the AI Analysis page before choosing 20Δ.")
             commission = st.number_input("Commission / contract ($)", min_value=0.0, value=0.65, step=0.05)
         with a2:
             slippage = st.number_input("Slippage / leg ($)", min_value=0.0, value=0.00, step=0.05)

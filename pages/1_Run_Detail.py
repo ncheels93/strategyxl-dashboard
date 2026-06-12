@@ -520,7 +520,7 @@ if run.get("in_withdrawals_on"):
 # ─────────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("Win / Loss Profile")
-st.caption("A 7-DTE, 10-delta credit spread is lots of small wins and a few big losses — "
+st.caption("A 7-DTE out-of-the-money credit spread is lots of small wins and a few big losses — "
            "these size that. A win/loss ratio below 1 means each win is smaller than each loss; "
            "the high win rate is what makes it profitable.")
 w1, w2, w3, w4, w5 = st.columns(5)

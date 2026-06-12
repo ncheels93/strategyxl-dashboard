@@ -33,8 +33,8 @@ OFF_LABEL = "(filter off)"
 # ─────────────────────────────────────────────────────────────────────────
 st.title("SPX 7 DTE Put Credit Spread — Backtest Dashboard")
 st.caption(
-    "Strategy: enter Friday, 10-delta short, \\$10–\\$200 widths, hold to expiration "
-    "with 1DTE / breach exits. All P&L figures are NET of commission and slippage."
+    "Strategy: enter Friday, sell the 5 / 10 / 15 / 20-delta put, \\$10–\\$200 widths, "
+    "hold to expiration with 1DTE / breach exits. All P&L figures are NET of commission and slippage."
 )
 guide_link()
 
@@ -71,6 +71,9 @@ df["target_disp"] = _tw.map(lambda v: f"${int(round(v)):,}/mo" if pd.notna(v) an
 # Display strings for the breakdown roll-ups.
 _sw = pd.to_numeric(df["in_spread_width"], errors="coerce")
 df["width_disp"] = _sw.map(lambda v: f"${int(v)}" if pd.notna(v) else "—")
+# Short-strike delta target as a friendly string (0.05 → "5Δ").
+_sd = pd.to_numeric(df["in_short_delta_threshold"], errors="coerce")
+df["delta_disp"] = _sd.map(lambda v: f"{v*100:g}Δ" if pd.notna(v) else "—")
 df["wd_disp"] = (df["in_withdrawals_on"] == True).map({True: "On", False: "Off"})
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -117,6 +120,11 @@ min_calmar = st.sidebar.slider(
 
 # ── Structure — the big dimensions you usually pick first.
 st.sidebar.caption("**Structure**")
+delta_opts = sorted(df["delta_disp"].unique().tolist(),
+                    key=lambda s: float(s.rstrip("Δ")) if s != "—" else 10**9)
+sel_delta = st.sidebar.multiselect("Short delta", delta_opts, default=delta_opts,
+    help="Short-strike delta target. Lower delta = further out-of-the-money: "
+         "higher win rate and shallower drawdowns, but less premium collected.")
 width_options = sorted(df["in_spread_width"].dropna().unique().tolist())
 selected_widths = st.sidebar.multiselect("Spread width", width_options, default=width_options,
     help="Spread width in points; collateral per contract = width × \\$100.")
@@ -168,6 +176,8 @@ if max_dd_floor > _dd_lo:
 if min_calmar > _cal_lo:
     filtered = filtered[pd.to_numeric(filtered["kpi_calmar"], errors="coerce") >= min_calmar]
 # Config filters.
+if sel_delta:
+    filtered = filtered[filtered["delta_disp"].isin(sel_delta)]
 if selected_widths:
     filtered = filtered[filtered["in_spread_width"].isin(selected_widths)]
 if sel_start:
@@ -480,8 +490,16 @@ def _render_rollup(tbl, dim_label, caption):
 if filtered.empty:
     st.caption("No runs in the current filter.")
 else:
-    _tab_w, _tab_cap, _tab_risk, _tab_trend, _tab_wd = st.tabs(
-        ["Spread width", "Starting capital", "Max weekly risk", "Trend filter", "Withdrawals"])
+    _tab_d, _tab_w, _tab_cap, _tab_risk, _tab_trend, _tab_wd = st.tabs(
+        ["Short delta", "Spread width", "Starting capital", "Max weekly risk", "Trend filter", "Withdrawals"])
+
+    with _tab_d:
+        _t = _rollup(filtered, "delta_disp", "Short delta")
+        _t["_k"] = _t["Short delta"].map(lambda s: float(s.rstrip("Δ")) if s != "—" else 10**9)
+        _render_rollup(_t.sort_values("_k").drop(columns="_k"), "Short delta",
+            "One row per short-strike delta target. Lower delta sells further out-of-the-money — "
+            "higher win rate and shallower drawdowns, but less premium, so lower CAGR; higher "
+            "delta is the reverse trade-off.")
 
     with _tab_w:
         _t = _rollup(filtered, "width_disp", "Width")
@@ -603,8 +621,8 @@ with st.expander("About this dashboard & metric definitions"):
     st.markdown(
         """
 **Strategy.** SPX weekly put credit spreads: enter each Friday (or Thursday before a holiday),
-sell the ~10-delta put, buy the put \\$50/\\$100/\\$200 lower, hold to expiration with optional
-breach and 1-DTE close rules. Position sizing is **simple and capped**: risk a set % of the
+sell a put at the chosen short delta (5Δ / 10Δ / 15Δ / 20Δ — 10Δ is the core), buy the put
+\\$10–\\$200 lower, hold to expiration with optional breach and 1-DTE close rules. Position sizing is **simple and capped**: risk a set % of the
 account each week (default 50%), never more than a hard dollar ceiling —
 `weekly risk = MIN(weekly_risk_pct × equity, max_weekly_risk)`. The cap is the risk dial:
 tighter de-risks sooner; uncapped rides the full % the whole way.

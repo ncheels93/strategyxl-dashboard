@@ -71,7 +71,7 @@ def columns_of(cursor, table: str) -> list[str]:
 
 
 def migrate_table(src: pyodbc.Connection, tgt: pyodbc.Connection, table: str,
-                  truncate: bool) -> int:
+                  truncate: bool, append_where: str | None = None) -> int:
     scur = src.cursor()
     tcur = tgt.cursor()
     tcur.fast_executemany = True   # pyodbc bulk param binding — fast for the ~2.8M tradelog rows
@@ -90,24 +90,30 @@ def migrate_table(src: pyodbc.Connection, tgt: pyodbc.Connection, table: str,
 
     tcur.execute(f"SELECT COUNT(*) FROM dbo.{table}")
     existing = tcur.fetchone()[0]
-    if existing:
+    if existing and not append_where:
         if not truncate:
             raise SystemExit(
                 f"[{table}] target already has {existing:,} rows. "
-                "Pass --truncate to wipe and reload, or clear it manually."
+                "Pass --truncate to wipe and reload, --append-where to add new rows, "
+                "or clear it manually."
             )
         # DELETE (not TRUNCATE) — TRUNCATE is blocked by the FK on the child table.
         print(f"[{table}] clearing {existing:,} existing rows...")
         tcur.execute(f"DELETE FROM dbo.{table}")
         tgt.commit()
+        existing = 0
 
     col_list = ", ".join(f"[{c}]" for c in src_cols)
     placeholders = ", ".join(["?"] * len(src_cols))
     insert_sql = f"INSERT INTO dbo.{table} ({col_list}) VALUES ({placeholders})"
 
-    where_sql = f" WHERE {WHERE_FILTERS[table]}" if table in WHERE_FILTERS else ""
+    # Combine the table's standing subset filter (if any) with the append filter.
+    _conds = [c for c in (WHERE_FILTERS.get(table), append_where) if c]
+    where_sql = (" WHERE " + " AND ".join(f"({c})" for c in _conds)) if _conds else ""
     if where_sql:
-        print(f"[{table}] source filter: {WHERE_FILTERS[table]}")
+        print(f"[{table}] source filter:{where_sql[7:]}")
+    if append_where:
+        print(f"[{table}] APPEND mode — target keeps its {existing:,} existing rows.")
 
     is_identity = table in IDENTITY_TABLES
     if is_identity:
@@ -128,14 +134,17 @@ def migrate_table(src: pyodbc.Connection, tgt: pyodbc.Connection, table: str,
         tcur.execute(f"SET IDENTITY_INSERT dbo.{table} OFF")
         tgt.commit()
 
-    # Verify — compare target (full) against the SAME-filtered source count.
+    # Verify — appended rows must equal the SAME-filtered source count
+    # (in append mode the target also keeps its pre-existing rows).
     scur.execute(f"SELECT COUNT(*) FROM dbo.{table}{where_sql}")
     src_count = scur.fetchone()[0]
     tcur.execute(f"SELECT COUNT(*) FROM dbo.{table}")
     tgt_count = tcur.fetchone()[0]
-    print(f"\r[{table}] done: {tgt_count:,} rows on target (source {src_count:,}).")
-    if src_count != tgt_count:
-        raise SystemExit(f"[{table}] COUNT MISMATCH — source {src_count}, target {tgt_count}.")
+    loaded = tgt_count - existing
+    print(f"\r[{table}] done: {tgt_count:,} rows on target "
+          f"({existing:,} kept + {loaded:,} loaded; source selection {src_count:,}).")
+    if src_count != loaded:
+        raise SystemExit(f"[{table}] COUNT MISMATCH — source selection {src_count}, loaded {loaded}.")
     return tgt_count
 
 
@@ -148,10 +157,17 @@ def main() -> None:
     ap.add_argument("--src-server", default="StockDevVM", help="Source server (default StockDevVM)")
     ap.add_argument("--src-database", default="ORATS_Options", help="Source database (default ORATS_Options)")
     ap.add_argument("--truncate", action="store_true", help="Wipe target tables before loading")
+    ap.add_argument("--append-where", default=None,
+                    help="Incremental mode: append only source rows matching this SQL predicate "
+                         "(e.g. \"run_id > 990\") and keep the target's existing rows. "
+                         "Applied to every table migrated — use with --tables.")
     ap.add_argument("--tables", nargs="+", choices=TABLES, default=None,
                     help="Subset of tables to migrate (default: all). "
                          "e.g. --tables SPX_Daily_MAs to add just the daily series.")
     args = ap.parse_args()
+
+    if args.append_where and args.truncate:
+        raise SystemExit("--append-where and --truncate are mutually exclusive.")
 
     tables = args.tables or TABLES
 
@@ -165,7 +181,7 @@ def main() -> None:
     try:
         grand = 0
         for table in tables:
-            grand += migrate_table(src, tgt, table, args.truncate)
+            grand += migrate_table(src, tgt, table, args.truncate, args.append_where)
         print(f"\nMigration complete — {grand:,} rows across {len(tables)} table(s).")
     finally:
         src.close()

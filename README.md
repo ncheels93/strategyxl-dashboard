@@ -110,7 +110,8 @@ strategyxl_share/
 │   ├── 1_Run_Detail.py
 │   ├── 2_Compare.py
 │   ├── 3_Guide.py
-│   └── 4_Request_Run.py        # submit/track backtest requests (writes Scenario_Requests)
+│   ├── 4_AI_Analysis.py        # chart-backed findings across the whole grid (live data)
+│   └── 5_Request_Run.py        # submit/track backtest requests (writes Scenario_Requests)
 ├── data/
 │   ├── db.py                   # SQLAlchemy engine, cached queries, request CRUD, admin gate
 │   └── docs.py                 # shared TERMS/SECTIONS for the popovers + the Guide

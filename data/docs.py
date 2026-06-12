@@ -24,7 +24,7 @@ def caption(text: str) -> None:
 
 def guide_link() -> None:
     """Prominent link to the full Guide page — call at the top of each page."""
-    st.page_link("pages/3_Guide.py", label="📖  Full guide, definitions & key findings")
+    st.page_link("pages/3_Guide.py", label="📖  Full guide & definitions")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -84,6 +84,12 @@ def capped_risk_pct(weekly_risk_pct, max_weekly_risk, equity) -> float:
 # Glossary — term → plain-English definition (as THIS dashboard computes it)
 # ─────────────────────────────────────────────────────────────────────────
 TERMS = {
+    "Short Delta":
+        "The delta of the put the strategy sells — roughly the option market's estimate of "
+        "the chance it finishes in the money. Lower delta (5Δ) = further out-of-the-money: "
+        "higher win rate, shallower drawdowns, less premium. Higher delta (15Δ/20Δ) = closer "
+        "to the money: more premium, more frequent and deeper losses. 10Δ is the core "
+        "strategy; the engine picks the strike closest to the target within a band around it.",
     "CAGR":
         "Compound annual growth rate — the steady yearly rate that would turn the "
         "starting capital into the ending equity over the full period. One annualized "
@@ -221,14 +227,14 @@ SECTIONS = {
     ),
     "summary_breakdowns": (
         "A set of roll-ups — one row per category — across several dimensions (use the tabs): "
-        "**spread width**, **starting capital**, **max weekly risk** (the risk dial), "
-        "**trend filter**, and **withdrawals**. Each row shows the **median** CAGR / Max DD / "
+        "**short delta**, **spread width**, **starting capital**, **max weekly risk** (the risk "
+        "dial), **trend filter**, and **withdrawals**. Each row shows the **median** CAGR / Max DD / "
         "Calmar (the typical run in that bucket), the **best** CAGR / Calmar / Sharpe (its top "
         "run), and the **win/loss profile** (Median Avg Loss, Median W/L). Because every bucket "
         "spans the same surrounding configs, each tab isolates what that one dimension does. "
         "Structural tabs are sorted naturally (small → large); the Trend filter tab is sorted by "
         "Median Calmar.",
-        ["CAGR", "Max Drawdown", "Calmar", "Sharpe", "Avg Loss", "Win/Loss Ratio"],
+        ["Short Delta", "CAGR", "Max Drawdown", "Calmar", "Sharpe", "Avg Loss", "Win/Loss Ratio"],
     ),
     "summary_leaderboard": (
         "Every run in the current filter, ranked. Use **Sort by** (or click a column "
