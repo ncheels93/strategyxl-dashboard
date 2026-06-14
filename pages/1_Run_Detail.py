@@ -636,6 +636,13 @@ elif row_filter == "Exit days":
         view_tlog["exit_reason"].notna() | view_tlog["expiring_trade_num"].notna()
     ]
 
+# Surface the actual spread width right beside the long strike, in dollars, so the
+# short−long math is done for the reader (it varies now the long leg can narrow ≤10%).
+if {"spread_width_actual", "long_strike"} <= set(view_tlog.columns):
+    _cols = [c for c in view_tlog.columns if c != "spread_width_actual"]
+    _cols.insert(_cols.index("long_strike") + 1, "spread_width_actual")
+    view_tlog = view_tlog[_cols].rename(columns={"spread_width_actual": "Spread $"})
+
 st.caption(f"{len(view_tlog):,} rows shown of {len(tlog):,}  ·  click a column header to sort")
 
 # Comma-format every numeric column for readability. SQL DECIMALs arrive as object/
@@ -668,6 +675,10 @@ for _col in view_tlog.columns:
     else:
         _fmt = "%,.2f"                            # prices, per-share P&L — 2 decimals
     _tl_cfg[_col] = st.column_config.NumberColumn(format=_fmt)
+if "Spread $" in view_tlog.columns:
+    _tl_cfg["Spread $"] = st.column_config.NumberColumn(
+        "Spread $", format="$%,.0f",
+        help="Actual spread width = short strike − long strike (narrows up to 10% when the exact long strike is missing).")
 st.dataframe(view_tlog, use_container_width=True, height=600, hide_index=True,
              column_config=_tl_cfg)
 

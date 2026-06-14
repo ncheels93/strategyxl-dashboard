@@ -37,6 +37,8 @@ st.caption(
     "hold to expiration with 1DTE / breach exits. All P&L figures are NET of commission and slippage."
 )
 guide_link()
+st.page_link("pages/6_Strategy_Finder.py",
+             label="🎯  Just want a recommendation? Open the Strategy Finder")
 
 # ─────────────────────────────────────────────────────────────────────────
 # Load

@@ -278,7 +278,9 @@ SECTIONS = {
     ),
     "detail_tradelog": (
         "The full day-by-day record behind this run — each trading day's position, option "
-        "prices, P&L, cash and equity. Use the filter to focus on entry / exit / open "
+        "prices, P&L, cash and equity. The **Spread $** column (beside the long strike) is the "
+        "actual width = short − long; it can land up to 10% under the nominal width when the "
+        "exact long strike isn't listed. Use the filter to focus on entry / exit / open "
         "days; click a column header to sort.",
         [],
     ),

@@ -32,6 +32,19 @@ if df.empty:
     st.warning("No scenarios in the database yet.")
     st.stop()
 
+# Core grid only. The systematic factorial sweep is the production run (a full
+# re-run lands it all in one batch). Ad-hoc reader/community runs — custom exits,
+# off-grid caps/commissions — are tagged batch_id 9 and excluded here so they
+# don't pollute the matched-pair medians and frontiers. They stay fully visible
+# on the Leaderboard, Compare and Run Detail pages.
+# Convention: after each full re-run, tag the ad-hoc runs (profit-target set,
+# commission ≠ 0.65, or the $50w/$40k-cap requests) to batch_id 9.
+ADHOC_BATCH_IDS = (9,)
+df = df[~pd.to_numeric(df["batch_id"], errors="coerce").isin(ADHOC_BATCH_IDS)].copy()
+if df.empty:
+    st.warning("No core-grid scenarios in the database yet.")
+    st.stop()
+
 def _n(s):
     return pd.to_numeric(s, errors="coerce")
 
@@ -59,7 +72,7 @@ _DELTA_COLOR = {"5Δ": "#1D9E75", "10Δ": "#378ADD", "15Δ": "#EF9F27", "20Δ": 
 nw = df[df["in_withdrawals_on"] != True]          # the apples-to-apples growth set
 plot = df.dropna(subset=["cagr", "maxdd"])
 
-md(f"**{len(df):,} runs** in the database right now — "
+md(f"**{len(df):,} runs** in the core grid — "
    f"{' / '.join(_DELTA_ORDER)} short deltas × widths "
    f"{'/'.join(s.strip('$') for s in sorted(df['width_disp'].unique(), key=lambda s: float(s.strip('$—') or 0) if s != '—' else 9e9))} "
    "× nine starting-capital tiers × the weekly-risk/cap grid × 13 trend-filter settings × "
@@ -73,8 +86,8 @@ md(
     "study (every configuration run at all four deltas, everything else identical):\n\n"
     "| Your max-drawdown budget | Best tool for the job | What it earned (best in zone) |\n"
     "|---|---|--:|\n"
-    "| up to ~−15% | **5Δ short + a fast trend filter** (5-day SMA) | ~11–12% CAGR |\n"
-    "| ~−20% | **10Δ** — the balanced core strategy | ~15% CAGR |\n"
+    "| up to ~−15% | **5Δ short + a fast trend filter** (5-day SMA) | ~12% CAGR |\n"
+    "| ~−20% | **10Δ** — the balanced core strategy | ~16% CAGR |\n"
     "| ~−30% | **15Δ with no trend filter** | ~19% CAGR |\n"
     "| any budget | ~~20Δ~~ — dominated at every risk level | — |\n\n"
     "The scatter below is the whole grid; the dotted lines trace the best frontier of each "
@@ -130,11 +143,11 @@ st.dataframe(_dt, hide_index=True, use_container_width=True,
              })
 md(
     "What the matched pairs showed (same scenario, only the delta changed):\n"
-    "- **5Δ vs 10Δ:** gives up ~2 points of CAGR but takes ~8 points *less* drawdown, and wins "
+    "- **5Δ vs 10Δ:** gives up ~1½ points of CAGR but takes ~8 points *less* drawdown, and wins "
     "the risk-adjusted contest in the conservative zone outright. Win rate rises to ~93%.\n"
-    "- **15Δ vs 10Δ:** adds only ~½ point of CAGR for ~5 points *more* drawdown — a poor trade "
+    "- **15Δ vs 10Δ:** adds only ~½ point of CAGR for ~3 points *more* drawdown — a poor trade "
     "on average, **except** in the no-filter aggressive zone, where it clearly leads (~19% CAGR "
-    "at −28%).\n"
+    "at −32%).\n"
     "- **20Δ vs anything:** *dominated everywhere.* More drawdown than 15Δ and less return — "
     "median CAGR actually falls (premium gains are eaten by breaches getting bigger and more "
     "frequent), and no trend filter rescues it. **Selling closer to the money for \"more "
@@ -293,7 +306,7 @@ if not _wd.empty:
 md(
     "Reading the table: a **$250/mo draw on $40k** (≈ 7.5%/yr of the start) is *almost* "
     "sustainable — the best configs cover ~98% — but the average run leaves income on the "
-    "table. **$1,000/mo wants a $160k base** (best ~83%), and $2,000/mo isn't sustainable on "
+    "table. **$1,000/mo wants a $160k base** (best ~90%), and $2,000/mo isn't sustainable on "
     "any tier tested. A workable rule of thumb from the grid: target a monthly draw near "
     "**0.5–0.6% of starting capital**, and treat anything past 1% as hope, not a plan."
 )
@@ -358,7 +371,7 @@ md(
     "*slow* declines that the trend filters largely sat out, and in 2008 most configs were "
     "still small enough to be at full size anyway. **The lesson: this strategy's enemy is the "
     "fast crash from an uptrend, not the long bear.** Any improvement work should target "
-    "exactly that shape — see §11."
+    "exactly that shape — see §13."
 )
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -373,8 +386,8 @@ md(
 _x1 = pd.DataFrame({
     "OTM threshold": ["Off (0%)", "0.5%", "1%", "2% (current)", "3%"],
     "5Δ / $25w · Calmar": [0.24, 0.19, 0.93, 1.15, 1.05],
-    "10Δ / $50w · Calmar": [0.34, 0.94, 0.88, 0.86, 0.83],
-    "15Δ / $50w · Calmar": [0.72, 0.79, 0.67, 0.68, 0.65],
+    "10Δ / $50w · Calmar": [0.34, 0.95, 0.88, 0.86, 0.83],
+    "15Δ / $50w · Calmar": [0.58, 0.59, 0.56, 0.60, 0.58],
 })
 st.dataframe(_x1, hide_index=True, use_container_width=True,
              column_config={c: st.column_config.NumberColumn(format="%.2f")
@@ -386,23 +399,25 @@ md(
     "- **2% is the right ballpark — and clearly right for 5Δ.** At 5Δ a tighter trigger "
     "(0.5%) almost never fires until it's too late (−51% drawdown!), because a 5Δ strike "
     "sits far below spot; the threshold has to be *wide* to give any warning.\n"
-    "- **For 10Δ/15Δ, a tighter 0.5% trigger looked better on this history** (Calmar 0.94 vs "
-    "0.86 at 10Δ) — it fires rarely, keeping more final-day premium, and on this path dodged "
-    "the same disasters. *Treat that gain skeptically*: it rests on a handful of weeks, and "
-    "our earlier sizing study showed small exit tweaks can shift which crisis the equity path "
-    "meets at full size. The honest summary: **2% is a sound, conservative default; if "
-    "anything, the threshold should scale with delta (wider for lower delta), and a "
-    "0.5–1% setting at 10Δ+ is a promising, not proven, refinement.**\n\n"
+    "- **At 10Δ a tighter 0.5% trigger looked better on this history** (Calmar 0.95 vs "
+    "0.86) — it fires rarely, keeping more final-day premium, and on this path dodged the "
+    "same disasters. At 15Δ that edge disappears (≈0.59 vs 0.60). *Treat any such gain "
+    "skeptically*: it rests on a handful of weeks, and our sizing study showed small exit "
+    "tweaks can shift which crisis the equity path meets at full size — this very re-run "
+    "deepened the 15Δ config's drawdown and erased its apparent 0.5% advantage. The honest "
+    "summary: **2% is a sound, conservative default; if anything, the threshold should scale "
+    "with delta (wider for lower delta), and a 0.5–1% setting at 10Δ is a promising, not "
+    "proven, refinement.**\n\n"
     "**Q2 — Would taking profits early (e.g. at 95% of max profit) help?**"
 )
 _x2 = pd.DataFrame({
     "Profit target": ["None (current)", "95%", "90%", "80%"],
-    "5Δ / $25w · CAGR %": [11.49, 11.34, 11.08, 11.09],
-    "5Δ · Calmar": [1.15, 1.12, 1.06, 1.01],
-    "10Δ / $50w · CAGR %": [11.39, 11.22, 11.02, 10.82],
-    "10Δ · Calmar": [0.86, 0.85, 0.83, 0.78],
-    "15Δ / $50w · CAGR %": [18.77, 18.49, 18.47, 18.70],
-    "15Δ · Calmar": [0.68, 0.65, 0.67, 0.60],
+    "5Δ / $25w · CAGR %": [11.48, 11.33, 11.08, 11.09],
+    "5Δ · Calmar": [1.15, 1.11, 1.06, 1.00],
+    "10Δ / $50w · CAGR %": [11.43, 11.26, 11.06, 10.86],
+    "10Δ · Calmar": [0.86, 0.85, 0.83, 0.81],
+    "15Δ / $50w · CAGR %": [18.97, 18.62, 18.56, 18.78],
+    "15Δ · Calmar": [0.60, 0.55, 0.54, 0.58],
 })
 st.dataframe(_x2, hide_index=True, use_container_width=True,
              column_config={c: st.column_config.NumberColumn(format="%.2f")
@@ -412,23 +427,135 @@ md(
     "(80/90/95%) and on all three configs, CAGR fell and drawdown didn't improve. With ~7 days "
     "in a trade, the final days' decay *is* a large share of the edge, and the 1-DTE OTM rule "
     "already provides the protective exit a profit target would duplicate. (Per-trade stop "
-    "losses at 35/50/65% of credit were tested in earlier batches with the same verdict.) "
+    "losses at 35/50/65% of credit were tested in earlier batches with the same verdict; a "
+    "50% stop, a 50% profit target, and a reader-submitted 95% profit target were re-checked "
+    "on the current data — the stop didn't help and both profit targets gave return back.) "
     "What deserves credit instead: the **breach close** and the **1-DTE rule** — they are the "
     "exits doing the real work."
 )
 
 # ─────────────────────────────────────────────────────────────────────────
-st.header("11 · Where improvement might still be found")
+st.header("11 · Does skipping FOMC weeks help? — the most-requested test")
+md(
+    "A reader favorite: **skip the week's entry whenever a scheduled Fed (FOMC) decision "
+    "falls inside the trade's 7-day window.** We tested it the cheap way first — directly on "
+    "the realized trades already in the log, across the three flagship configs — before "
+    "building anything.\n\n"
+    "**The naive view looks damning.** Line up every core run's *worst-drawdown date* against "
+    "the FOMC calendar and **37% of them bottom within a few days of a meeting**, against an "
+    "**18.7% base rate** — nearly 2×. Case closed?\n\n"
+    "**No — that's a turning-point illusion.** FOMC meetings are where stressed markets often "
+    "*bottom and turn* (December 2018, the COVID low, the GFC low), not where the money is "
+    "lost. The honest test is causal: compare the realized P&L of trades that actually *span* "
+    "an FOMC decision against those that don't."
+)
+_fomc = pd.DataFrame({
+    "Config": ["Conservative 5Δ / $25w", "Balanced 10Δ / $50w",
+               "Aggressive 15Δ / $50w", "Pooled (all three)"],
+    "FOMC-wk trades": [80, 82, 127, 289],
+    "Loss rate · FOMC": [6.3, 11.0, 13.4, 10.7],
+    "Loss rate · other": [6.8, 9.0, 12.9, 10.2],
+    "Ret-on-risk · FOMC": [1.38, 1.68, 0.43, 1.05],
+    "Ret-on-risk · other": [1.27, 1.61, 2.04, 1.72],
+    "Worst trade · FOMC": [-28.4, -41.9, -75.2, -75.2],
+    "Worst trade · other": [-22.3, -46.8, -107.9, -107.9],
+})
+st.dataframe(_fomc, hide_index=True, use_container_width=True,
+             column_config={
+                 "FOMC-wk trades": st.column_config.NumberColumn(format="%d"),
+                 "Loss rate · FOMC": st.column_config.NumberColumn(format="%.1f%%"),
+                 "Loss rate · other": st.column_config.NumberColumn(format="%.1f%%"),
+                 "Ret-on-risk · FOMC": st.column_config.NumberColumn(format="%.2f%%"),
+                 "Ret-on-risk · other": st.column_config.NumberColumn(format="%.2f%%"),
+                 "Worst trade · FOMC": st.column_config.NumberColumn(format="%.1f%%"),
+                 "Worst trade · other": st.column_config.NumberColumn(format="%.1f%%"),
+             })
+st.caption("Per-trade outcomes split by whether a scheduled FOMC decision fell inside the "
+           "trade's holding window. 'Return on risk' = the trade's realized P&L as a share of "
+           "its max loss; 'worst trade' is the most negative single trade. 2007 → 2026-06-12.")
+md(
+    "Read it and the idea falls apart:\n"
+    "- **FOMC weeks are not more dangerous.** Pooled loss rate is **10.7% vs 10.2%** — a "
+    "coin-flip difference — and the **worst single trade in the whole sample is a *non*-FOMC "
+    "week** (−108% of risk, vs −75% on the worst FOMC week). The fat tail lives *outside* "
+    "FOMC weeks.\n"
+    "- **Those trades make money.** FOMC-overlap trades were net positive in *every* config — "
+    "**+$98k combined** across the three. Skipping them throws that away.\n"
+    "- **So you'd pay to make things worse:** drop ~**15% of all trades** (forgone premium) to "
+    "sit out weeks that carry *normal* risk and *positive* return.\n\n"
+    "**Why it fails:** the strategy's real enemy (§9) — the fast crash from an uptrend, met on "
+    "the last day — is already handled by the trend filter and the 1-DTE OTM exit (§10). A "
+    "scheduled-meeting calendar adds no information those don't already have, and the genuinely "
+    "violent Fed moves (the 2008 and March-2020 *emergency* cuts) were **unscheduled** — "
+    "invisible to a calendar rule in advance. A continuous **volatility-regime** signal (§13) "
+    "targets the crash *shape* far better than any fixed date. **Verdict: FOMC-week skipping is "
+    "mildly hurtful — we won't add it.**"
+)
+
+# ─────────────────────────────────────────────────────────────────────────
+st.header("12 · Does skipping CPI weeks help? — same test, same answer")
+md(
+    "After FOMC (§11), the natural follow-up: **skip the entry when a monthly CPI release "
+    "lands inside the trade's window.** CPI is the better suspect — hot inflation prints drove "
+    "some of 2022's worst single sessions (the −4.3% day on the September 2022 report). Same "
+    "cheap test, same three flagship configs, with release dates taken from the official BLS "
+    "calendar.\n\n"
+    "**This time even the naive overlay is empty.** Only **20% of core runs** bottom their "
+    "worst drawdown near a CPI release — *below* the **28.9% base rate**. Where FOMC at least "
+    "*looked* alarming until the causal test debunked it, CPI shows no clustering at all."
+)
+_cpi = pd.DataFrame({
+    "Config": ["Conservative 5Δ / $25w", "Balanced 10Δ / $50w",
+               "Aggressive 15Δ / $50w", "Pooled (all three)"],
+    "CPI-wk trades": [98, 100, 149, 347],
+    "Loss rate · CPI": [7.1, 11.0, 12.1, 10.4],
+    "Loss rate · other": [6.7, 8.9, 13.1, 10.2],
+    "Ret-on-risk · CPI": [0.85, 1.07, 1.57, 1.22],
+    "Ret-on-risk · other": [1.39, 1.76, 1.85, 1.70],
+    "Worst trade · CPI": [-28.4, -46.2, -69.6, -69.6],
+    "Worst trade · other": [-16.6, -46.8, -107.9, -107.9],
+})
+st.dataframe(_cpi, hide_index=True, use_container_width=True,
+             column_config={
+                 "CPI-wk trades": st.column_config.NumberColumn(format="%d"),
+                 "Loss rate · CPI": st.column_config.NumberColumn(format="%.1f%%"),
+                 "Loss rate · other": st.column_config.NumberColumn(format="%.1f%%"),
+                 "Ret-on-risk · CPI": st.column_config.NumberColumn(format="%.2f%%"),
+                 "Ret-on-risk · other": st.column_config.NumberColumn(format="%.2f%%"),
+                 "Worst trade · CPI": st.column_config.NumberColumn(format="%.1f%%"),
+                 "Worst trade · other": st.column_config.NumberColumn(format="%.1f%%"),
+             })
+st.caption("Per-trade outcomes split by whether a CPI release fell inside the trade's holding "
+           "window. 'Return on risk' = realized P&L as a share of max loss; 'worst trade' is the "
+           "most negative single trade. Release dates from the BLS/FRED calendar. 2007 → 2026-06-12.")
+md(
+    "The verdict carries straight over from §11:\n"
+    "- **Not more dangerous.** Pooled loss rate is **10.4% vs 10.2%**, and the worst single "
+    "trade in the sample is again a *non*-CPI week (−108% of risk vs −70%).\n"
+    "- **Profitable.** CPI-overlap trades were net positive in *every* config — **+$207k "
+    "combined.** Skipping ~19% of trades forfeits it.\n"
+    "- **One real difference from FOMC:** CPI weeks are *consistently* a touch less lucrative "
+    "per unit of risk across all three configs (FOMC was mixed). But they're still positive and "
+    "no more tail-heavy — so skipping them would lower return to dodge risk that isn't there, "
+    "and Calmar would fall, not rise.\n\n"
+    "**Verdict: like FOMC, CPI-week skipping is mildly hurtful — we won't add it.** Two "
+    "scheduled-calendar filters now tested, one result: this strategy's protection comes from "
+    "the trend filter and the 1-DTE exit, not from sitting out known dates. A continuous "
+    "**volatility-regime** signal (§13) remains the more promising direction."
+)
+
+# ─────────────────────────────────────────────────────────────────────────
+st.header("13 · Where improvement might still be found")
 md(
     "Honest assessment: within the dials this grid already sweeps (delta, width, capital, "
     "risk %, cap, 13 filters, exits), the frontier is now well-mapped — further grid-searching "
     "the same dials is more likely to overfit than to discover. The genuinely promising "
     "directions add *new information* the entry decision can't currently see, aimed squarely "
     "at the §9 finding (fast crashes from uptrends):\n\n"
-    "- **Event-calendar awareness.** The entry rule is blind to *scheduled* volatility. "
-    "Skipping (or halving) entries on weeks containing an **FOMC meeting**, a **CPI release**, "
-    "or quarterly **OPEX** is cheap to test once those dates are loaded as a calendar table — "
-    "February 2018 and several 2022/2023 drawdown weeks were event weeks.\n"
+    "- **Event-calendar awareness — mostly a dead end.** Skipping **FOMC** (§11) and **CPI** "
+    "(§12) weeks were both tested; neither helped. The only scheduled-calendar idea still "
+    "unchecked is quarterly **OPEX** — a flow/positioning effect rather than a data surprise — "
+    "but two clean negatives lower the prior that a third calendar is the answer.\n"
     "- **Volatility-regime sizing.** VIX level, VIX term-structure slope (backwardation = "
     "stress), or IV rank could scale the weekly risk % continuously — sit at full size in calm "
     "contango, automatically shrink when the vol market itself is warning. This targets the "
