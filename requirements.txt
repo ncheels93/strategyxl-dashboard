@@ -1,7 +1,10 @@
 streamlit>=1.42                      # st.context.cookies (remember-me login gate)
 pandas>=2.0
 plotly>=5.18
-sqlalchemy>=2.0
-pymssql>=2.2                         # cloud (Azure SQL) — pure-pip, bundles FreeTDS; works on Streamlit Community Cloud
-pyodbc>=5.0                          # local dev only — Windows-auth to StockDevVM (unused on cloud)
+duckdb>=1.0                          # cloud + local "r2" preview — reads Parquet from R2 via httpfs
+boto3>=1.34                          # R2 object storage — Request-a-Run JSONs (and the migration's Parquet upload)
 extra-streamlit-components>=0.1.60   # cookie component for the remembered shared-password gate
+sqlalchemy>=2.0                      # local "sql" backend only — StockDevVM
+pyodbc>=5.0                          # local "sql" backend only — Windows-auth to StockDevVM (unused on cloud)
+# pymssql removed — it was only for the retired Azure SQL backend.
+# The migration script (_migrate_to_r2.py) also needs pyarrow; it runs locally, not on Streamlit Cloud.

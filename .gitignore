@@ -13,6 +13,9 @@ env/
 .idea/
 *.swp
 
+# Logs (local run / migration output)
+*.log
+
 # OS
 .DS_Store
 Thumbs.db
