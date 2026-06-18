@@ -119,7 +119,7 @@ def _pending_to_queue_csv(pending: pd.DataFrame) -> str:
             "backtest_end": str(r["in_backtest_end"]),
             "short_delta_threshold": float(r["in_short_delta_threshold"]),
             "spread_width": int(r["in_spread_width"]),
-            "spread_handling": "Skip",
+            "spread_handling": "Snap Narrower",  # canonical/realistic fill (matches the core grid)
             "product_mode": "Both",
             "starting_capital": float(r["in_starting_capital"]),
             "weekly_risk_pct": float(r["in_weekly_risk_pct"]),

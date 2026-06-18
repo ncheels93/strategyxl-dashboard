@@ -22,7 +22,9 @@ check_password_gate()
 st.title("Strategy Finder")
 st.caption("Tell it your goals; it ranks the backtested configurations by how well they fit. "
            "This is a plain scoring of stored results — no AI call, instant and reproducible. "
-           "Backtested results, not investment advice; past performance doesn't guarantee future returns.")
+           "Ranks the realistic **Narrow**-fill set (Snap Narrower); the Exact-fill contrast lives "
+           "on AI Analysis §4. Backtested results, not investment advice; past performance doesn't "
+           "guarantee future returns.")
 
 # ─────────────────────────────────────────────────────────────────────────
 df = load_scenario_runs().copy()
@@ -32,6 +34,13 @@ if df.empty:
 
 CORE_BATCH_IDS = (1, 2, 3, 4)          # same core grid the AI Analysis uses
 df = df[pd.to_numeric(df["batch_id"], errors="coerce").isin(CORE_BATCH_IDS)].copy()
+
+# The core grid now carries both the canonical Narrow (Snap Narrower) fills and an Exact
+# (Skip) contrast set. Fill policy isn't a goal a user tunes here — it's a fill-realism
+# modeling detail — so the finder ranks the realistic Narrow set only. (The Narrow-vs-Exact
+# contrast lives on AI Analysis §4 and the Summary Fill-handling breakdown.)
+if (df["in_spread_handling"] == "Snap Narrower").any():
+    df = df[df["in_spread_handling"] == "Snap Narrower"].copy()
 
 def _n(s):
     return pd.to_numeric(s, errors="coerce")

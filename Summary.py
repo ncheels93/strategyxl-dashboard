@@ -77,6 +77,9 @@ df["width_disp"] = _sw.map(lambda v: f"${int(v)}" if pd.notna(v) else "—")
 _sd = pd.to_numeric(df["in_short_delta_threshold"], errors="coerce")
 df["delta_disp"] = _sd.map(lambda v: f"{v*100:g}Δ" if pd.notna(v) else "—")
 df["wd_disp"] = (df["in_withdrawals_on"] == True).map({True: "On", False: "Off"})
+# Spread-fill policy as a friendly string (matches the run-label wording).
+_FILL_MAP = {"Snap Narrower": "Narrow", "Skip": "Exact", "Snap Wider": "Widen", "Snap Nearest": "Closest"}
+df["fill_disp"] = df["in_spread_handling"].map(_FILL_MAP).fillna(df["in_spread_handling"]).fillna("—")
 
 # ─────────────────────────────────────────────────────────────────────────
 # Sidebar filters
@@ -119,6 +122,19 @@ min_calmar = st.sidebar.slider(
     "Min Calmar ≥", min_value=_cal_lo, max_value=_cal_hi, value=_cal_lo, step=0.05,
     help="Hide runs with Calmar (CAGR ÷ |Max DD|) below this. Far left = off. "
          "This is usually the most useful single screen.")
+
+# Fill handling — the grid carries the canonical Narrow (Snap Narrower) set AND an Exact
+# (Skip) contrast set, so every config appears once per policy. Pick one (default Narrow) so
+# the leaderboard isn't doubled; the Fill-handling breakdown always shows both regardless.
+_fill_choices = [f for f in ["Narrow", "Exact"] if f in df["fill_disp"].unique().tolist()]
+if not _fill_choices:
+    _fill_choices = sorted([f for f in df["fill_disp"].unique().tolist() if f != "—"])
+sel_fill = st.sidebar.radio("Fill handling", _fill_choices,
+    index=(_fill_choices.index("Narrow") if "Narrow" in _fill_choices else 0),
+    horizontal=True,
+    help="How a missing exact strike is filled. **Narrow** (Snap Narrower) is the canonical "
+         "set used across the analysis; **Exact** (Skip) trades only when the precise width "
+         "exists. The Fill-handling breakdown below always shows both for comparison.")
 
 # ── Structure — the big dimensions you usually pick first.
 st.sidebar.caption("**Structure**")
@@ -200,6 +216,12 @@ elif withdrawals_filter == "Off only":
 if target_opts and sel_targets and len(sel_targets) < len(target_opts):
     filtered = filtered[(filtered["in_withdrawals_on"] != True)
                         | filtered["target_disp"].isin(sel_targets)]
+
+# Fill handling applies LAST. Snapshot the pre-fill frame so the Fill-handling breakdown
+# can always show the Narrow-vs-Exact contrast regardless of the sidebar fill selection.
+filtered_nofill = filtered.copy()
+if sel_fill:
+    filtered = filtered[filtered["fill_disp"] == sel_fill]
 
 _count_slot.caption(f"**{len(filtered)} of {len(df)}** runs shown")
 
@@ -492,8 +514,9 @@ def _render_rollup(tbl, dim_label, caption):
 if filtered.empty:
     st.caption("No runs in the current filter.")
 else:
-    _tab_d, _tab_w, _tab_cap, _tab_risk, _tab_trend, _tab_wd = st.tabs(
-        ["Short delta", "Spread width", "Starting capital", "Max weekly risk", "Trend filter", "Withdrawals"])
+    _tab_d, _tab_w, _tab_cap, _tab_risk, _tab_trend, _tab_fill, _tab_wd = st.tabs(
+        ["Short delta", "Spread width", "Starting capital", "Max weekly risk", "Trend filter",
+         "Fill handling", "Withdrawals"])
 
     with _tab_d:
         _t = _rollup(filtered, "delta_disp", "Short delta")
@@ -529,6 +552,17 @@ else:
         _render_rollup(_t.sort_values("MedCalmar", ascending=False), "Trend MA",
             "One row per trend-filter MA — each MA spans the same configs, so it's apples-to-apples. "
             "Sorted by Median Calmar: faster filters (ema_9, short SMAs) lead; the slow 50>200 regime trails.")
+
+    with _tab_fill:
+        # Always span both policies (ignores the sidebar Fill filter) so the contrast is
+        # visible even with the default Narrow-only leaderboard.
+        _t = _rollup(filtered_nofill, "fill_disp", "Fill handling")
+        _render_rollup(_t.sort_values("MedCalmar", ascending=False), "Fill handling",
+            "One row per spread-fill policy — **shown across both policies regardless of the sidebar "
+            "Fill filter.** **Narrow** (the production default — fills the nearest narrower strike when "
+            "the exact width is missing) vs **Exact** (trades only when the exact width exists, else "
+            "skips the week). Identical on narrow widths and from ~2012 on; they diverge on wide spreads "
+            "in the sparse early years — see AI Analysis §4 for the contrast.")
 
     with _tab_wd:
         _t = _rollup(filtered, "wd_disp", "Withdrawals")
